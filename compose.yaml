@@ -1,0 +1,39 @@
+name: market
+services:
+  app:
+    build: .
+    image: market-app:${RELEASE_ID:-local}
+    restart: unless-stopped
+    env_file: ${ENV_FILE:-.env}
+    volumes:
+      - market_data:/app/data
+    expose:
+      - '8000'
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    read_only: true
+    tmpfs: [/tmp]
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: '3'}
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports: ['80:80', '443:443']
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: '3'}
+volumes:
+  market_data:
+  caddy_data:
+  caddy_config:
