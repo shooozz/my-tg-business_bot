@@ -1,0 +1,11 @@
+# Temporary admin access without a domain. HTTP binds only to host loopback.
+# DOMAIN=localhost ENV_FILE=/opt/market/.env docker compose -p market --env-file /opt/market/.env -f compose.yaml -f compose.tunnel.yaml up -d --build --wait app
+services:
+  app:
+    ports:
+      - '127.0.0.1:8000:8000'
+    environment:
+      COOKIE_SECURE: 'false'
+      PUBLIC_URL: http://localhost:8000
+  caddy:
+    profiles: [https]

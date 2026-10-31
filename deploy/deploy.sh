@@ -8,6 +8,10 @@ cd "/opt/market/releases/$release_id"
 export RELEASE_ID="$release_id" ENV_FILE=/opt/market/.env
 test -f "$ENV_FILE"
 compose=(docker compose -p market --env-file "$ENV_FILE")
+if test -f /opt/market/admin-mode && test "$(cat /opt/market/admin-mode)" = tunnel; then
+  export DOMAIN=localhost
+  compose+=(-f compose.yaml -f compose.tunnel.yaml)
+fi
 "${compose[@]}" config --quiet
 "${compose[@]}" build app
 if "${compose[@]}" ps --status running --services | grep -qx app; then
