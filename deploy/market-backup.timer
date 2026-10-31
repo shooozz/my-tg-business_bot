@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Market backup at 03:00 Moscow time
+
+[Timer]
+OnCalendar=*-*-* 03:00:00 Europe/Moscow
+Persistent=true
+RandomizedDelaySec=300
+Unit=market-backup.service
+
+[Install]
+WantedBy=timers.target

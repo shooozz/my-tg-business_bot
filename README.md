@@ -92,6 +92,8 @@ bash /opt/market/releases/PREVIOUS_COMMIT_SHA/deploy/deploy.sh PREVIOUS_COMMIT_S
 
 ## Резервные копии
 
+Для ежедневной отправки в бесплатный Google Drive подготовлены rclone crypt и systemd timer: [настройка и восстановление](docs/google-drive-backups.md). Это заменяет ручную организацию ежедневного копирования ниже; включается после авторизации Google и тестового восстановления.
+
 ```bash
 docker compose -p market --env-file /opt/market/.env exec -T app python scripts/backup.py
 ```
