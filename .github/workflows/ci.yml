@@ -60,9 +60,12 @@ jobs:
   deploy:
     name: Deploy to Production
     needs: test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.DEPLOY_ENABLED == 'true'
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && vars.DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-latest
     environment: production
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false
 
     steps:
       - name: Checkout code
@@ -75,10 +78,15 @@ jobs:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
           SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
         run: |
-          mkdir -p ~/.ssh
-          echo "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          install -d -m 700 ~/.ssh
+          test -n "$SSH_PRIVATE_KEY" && test -n "$SSH_KNOWN_HOSTS"
+          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          echo "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          if ! ssh-keygen -y -P '' -f ~/.ssh/deploy_key > /dev/null 2>&1; then
+            echo '::error::SSH_PRIVATE_KEY must be a complete, unencrypted OpenSSH private key with real line breaks.'
+            exit 1
+          fi
+          printf '%s\n' "$SSH_KNOWN_HOSTS" | tr -d '\r' > ~/.ssh/known_hosts
           chmod 644 ~/.ssh/known_hosts
 
       - name: Archive verified commit
@@ -92,10 +100,10 @@ jobs:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
         run: |
-          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+          scp -i ~/.ssh/deploy_key -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=20 -o StrictHostKeyChecking=yes \
             deploy.tar.gz ${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/
 
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+          ssh -i ~/.ssh/deploy_key -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=20 -o StrictHostKeyChecking=yes \
             ${DEPLOY_USER}@${DEPLOY_HOST} \
             "mkdir -p /opt/market/releases/${COMMIT_SHA} && \
              cd /opt/market/releases/${COMMIT_SHA} && \
@@ -108,10 +116,9 @@ jobs:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
         run: |
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+          ssh -i ~/.ssh/deploy_key -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=20 -o StrictHostKeyChecking=yes \
             ${DEPLOY_USER}@${DEPLOY_HOST} \
-            "docker compose -p market ps && \
-             cat /opt/market/current-release"
+            "bash /opt/market/releases/${COMMIT_SHA}/deploy/verify.sh ${COMMIT_SHA}"
 
       - name: Cleanup SSH keys
         if: always()
