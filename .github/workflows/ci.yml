@@ -39,6 +39,8 @@ jobs:
           pip install pytest pytest-asyncio httpx
 
       - name: Run tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}
         run: |
           pytest -v
 
