@@ -31,16 +31,45 @@ async def product_card(uid, pid):
     row = db.one('SELECT * FROM products WHERE id=? AND visible=1 AND synced>0',(pid,))
     if not row:
         raise ValueError('Товар больше не продаётся')
-    p = (await core.jaha('GET','/products/'+quote(row['code'],safe='')))['product']
+
+    # Get product from provider
+    provider_name = row.get('provider', 'jaha')
+    product_code = row['code'].split(':')[-1]  # Remove provider prefix if exists
+
+    from .providers.manager import get_manager
+    manager = get_manager()
+
+    try:
+        # Fetch fresh product data
+        p_obj = await manager.get_provider(provider_name).get_products()
+        p_obj = next((p for p in p_obj if p.code == product_code), None)
+
+        if not p_obj:
+            raise ValueError('Товар больше не продаётся')
+
+        # Convert to old format
+        p = p_obj.provider_data
+        p['title'] = p_obj.name
+        p['description'] = p_obj.description
+        p['price_usdt'] = p_obj.price_usdt
+        p['status'] = 'available' if p_obj.in_stock else 'unavailable'
+        p['available'] = 1 if p_obj.in_stock else 0
+        p['min_quantity'] = p_obj.min_quantity
+        p['max_quantity'] = p_obj.max_quantity
+    except Exception:
+        # Fallback to cached data
+        p = json.loads(row['data'])
+
     db.execute('UPDATE products SET data=?,synced=? WHERE id=?',(json.dumps(p,ensure_ascii=False),time.time(),pid))
-    qty = p['min_quantity']
-    text = f"{p['title']} · {p['variant']}\n\n{p['description']}\n\nСрок: {p['period']}\nВыдача: {'автоматическая' if p['delivery_type']=='automatic' else 'ручная, срок не гарантируется'}\nЗаказ: {qty} шт. × {row['stars']} ⭐ = {qty*row['stars']} ⭐"
+    qty = p.get('min_quantity', 1)
+    text = f"{p['title']} · {p.get('variant', '')}\n\n{p.get('description', '')}\n\nСрок: {p.get('period', 'не указан')}\nВыдача: {'автоматическая' if p.get('delivery_type')=='automatic' else 'ручная, срок не гарантируется'}\nЗаказ: {qty} шт. × {row['stars']} ⭐ = {qty*row['stars']} ⭐"
     buttons = []
-    if p['status']=='available' and p['available']>=qty and qty<=p['max_quantity']:
+    if p.get('status')=='available' and p.get('available', 0)>=qty and qty<=p.get('max_quantity', 1):
         choices=sorted({qty,5,10})
-        buttons.append([core.button(f'{n} шт. · {n*row["stars"]} ⭐',f'buy:{pid}:{n}') for n in choices if qty<=n<=min(p['available'],p['max_quantity'])])
+        buttons.append([core.button(f'{n} шт. · {n*row["stars"]} ⭐',f'buy:{pid}:{n}') for n in choices if qty<=n<=min(p.get('available', 0),p.get('max_quantity', 1))])
     buttons.append([core.button('← Каталог','catalog:0'),core.button('Поддержка',url=support_url())])
     core.say('shop',uid,text,buttons)
+
 
 async def begin_order(uid, pid, quantity=None):
     if not os.getenv('SHOP_TERMS'):
@@ -48,18 +77,44 @@ async def begin_order(uid, pid, quantity=None):
     row = db.one('SELECT * FROM products WHERE id=? AND visible=1 AND stars>0 AND synced>0',(pid,))
     if not row:
         raise ValueError('Товар недоступен')
-    p = (await core.jaha('GET','/products/'+quote(row['code'],safe='')))['product']
-    qty = quantity if quantity is not None else p['min_quantity']
-    if p['status']!='available' or p['available']<qty or p['max_quantity']<qty or qty<p['min_quantity']:
+
+    # Get product from provider
+    provider_name = row.get('provider', 'jaha')
+    product_code = row['code'].split(':')[-1]
+
+    from .providers.manager import get_manager
+    manager = get_manager()
+
+    try:
+        p_obj = await manager.get_provider(provider_name).get_products()
+        p_obj = next((p for p in p_obj if p.code == product_code), None)
+
+        if not p_obj:
+            raise ValueError('Товар недоступен')
+
+        p = p_obj.provider_data
+        p['title'] = p_obj.name
+        p['code'] = p_obj.code
+        p['price_usdt'] = p_obj.price_usdt
+        p['status'] = 'available' if p_obj.in_stock else 'unavailable'
+        p['available'] = 1 if p_obj.in_stock else 0
+        p['min_quantity'] = p_obj.min_quantity
+        p['max_quantity'] = p_obj.max_quantity
+    except Exception:
+        p = json.loads(row['data'])
+
+    qty = quantity if quantity is not None else p.get('min_quantity', 1)
+    if p.get('status')!='available' or p.get('available', 0)<qty or p.get('max_quantity', 1)<qty or qty<p.get('min_quantity', 1):
         raise ValueError('Товар закончился')
     oid = uuid.uuid4().hex
-    body = {'product_code':p['code'],'quantity':qty,'max_unit_price_usdt':p['price_usdt'],'external_order_id':oid}
-    draft = {'id':oid,'pid':pid,'body':body,'stars':row['stars']*qty,'product':p,'answers':[],'step':0,'created':time.time()}
+    body = {'product_code':p['code'],'quantity':qty,'max_unit_price_usdt':p.get('price_usdt', '0'),'external_order_id':oid}
+    draft = {'id':oid,'pid':pid,'body':body,'stars':row['stars']*qty,'product':p,'answers':[],'step':0,'created':time.time(),'provider':provider_name}
     db.set_setting(f'draft:{uid}',core.seal(draft))
-    if p['buyer_input']['required']:
+    if p.get('buyer_input', {}).get('required'):
         await ask_field(uid,draft)
     else:
         confirm_order(uid,draft)
+
 
 def input_fields(draft):
     req = draft['product']['buyer_input']
@@ -127,12 +182,14 @@ async def shop_update(update):
         draft=core.unseal(raw) if raw else None
         if not draft or draft['id']!=data[8:] or time.time()-draft['created']>900:
             raise ValueError('Оформление устарело. Откройте товар заново.')
-        if draft['product']['buyer_input']['required'] and draft['step']!=len(input_fields(draft)):
+        if draft['product'].get('buyer_input', {}).get('required') and draft['step']!=len(input_fields(draft)):
             raise ValueError('Сначала заполните данные')
         with db.connect() as c:
-            c.execute('INSERT OR IGNORE INTO orders(id,user_id,product_id,stars,body,created) VALUES(?,?,?,?,?,?)',(draft['id'],uid,draft['pid'],draft['stars'],core.seal(draft['body']),time.time()))
+            provider_name = draft.get('provider', 'jaha')
+            c.execute('INSERT OR IGNORE INTO orders(id,user_id,product_id,stars,body,created,provider) VALUES(?,?,?,?,?,?,?)',(draft['id'],uid,draft['pid'],draft['stars'],core.seal(draft['body']),time.time(),provider_name))
             db.enqueue('shop','sendInvoice',{'chat_id':uid,'title':draft['product']['title'][:32],'description':f"{draft['body']['quantity']} шт. · условия приняты",'payload':draft['id'],'currency':'XTR','prices':[{'label':'Заказ','amount':draft['stars']}],'start_parameter':draft['id']},'invoice:'+draft['id'],c)
             c.execute('DELETE FROM settings WHERE key=?',(f'draft:{uid}',))
+
     elif text and not text.startswith('/'):
         raw=db.setting(f'draft:{uid}')
         draft=core.unseal(raw) if raw else None

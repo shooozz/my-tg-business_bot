@@ -23,8 +23,8 @@ def init():
     with connect() as c:
         c.executescript('''
         CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS products(id INTEGER PRIMARY KEY, code TEXT UNIQUE, data TEXT NOT NULL, visible INTEGER DEFAULT 0, stars INTEGER DEFAULT 0, synced REAL DEFAULT 0);
-        CREATE TABLE IF NOT EXISTS orders(id TEXT PRIMARY KEY, user_id INTEGER, product_id INTEGER, stars INTEGER, body TEXT, state TEXT DEFAULT 'invoice', charge TEXT UNIQUE, supplier_number TEXT, snapshot TEXT, delivery_hash TEXT, error TEXT, attempts INTEGER DEFAULT 0, next_poll REAL DEFAULT 0, created REAL NOT NULL);
+        CREATE TABLE IF NOT EXISTS products(id INTEGER PRIMARY KEY, code TEXT UNIQUE, data TEXT NOT NULL, visible INTEGER DEFAULT 0, stars INTEGER DEFAULT 0, synced REAL DEFAULT 0, provider TEXT DEFAULT 'jaha');
+        CREATE TABLE IF NOT EXISTS orders(id TEXT PRIMARY KEY, user_id INTEGER, product_id INTEGER, stars INTEGER, body TEXT, state TEXT DEFAULT 'invoice', charge TEXT UNIQUE, supplier_number TEXT, snapshot TEXT, delivery_hash TEXT, error TEXT, attempts INTEGER DEFAULT 0, next_poll REAL DEFAULT 0, created REAL NOT NULL, provider TEXT DEFAULT 'jaha');
         CREATE TABLE IF NOT EXISTS tickets(id INTEGER PRIMARY KEY, user_id INTEGER, state TEXT DEFAULT 'open', created REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY, ticket_id INTEGER REFERENCES tickets(id), author TEXT, text TEXT, created REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS outbox(id INTEGER PRIMARY KEY, bot TEXT, method TEXT, payload TEXT, dedupe TEXT UNIQUE, sent INTEGER DEFAULT 0, attempts INTEGER DEFAULT 0, next_try REAL DEFAULT 0);
@@ -32,6 +32,18 @@ def init():
         CREATE TABLE IF NOT EXISTS payments(charge TEXT PRIMARY KEY, user_id INTEGER, payload TEXT, created REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY, actor TEXT, action TEXT, created REAL NOT NULL);
         ''')
+
+        # Add provider column to existing tables if not exists
+        try:
+            c.execute('ALTER TABLE products ADD COLUMN provider TEXT DEFAULT "jaha"')
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+
+        try:
+            c.execute('ALTER TABLE orders ADD COLUMN provider TEXT DEFAULT "jaha"')
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+
 
 def rows(sql, args=()):
     with connect() as c:

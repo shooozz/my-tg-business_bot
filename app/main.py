@@ -84,19 +84,47 @@ async def health():
     db.one('SELECT 1')
     return {'status':'ok'}
 
+
 @app.get('/api/dashboard')
 async def dashboard():
     import json
+    from .providers.manager import get_manager
+
     products=db.rows('SELECT * FROM products ORDER BY id')
     for p in products:
         p['data']=json.loads(p['data'])
-    orders=db.rows('SELECT id,user_id,product_id,stars,state,supplier_number,error,created FROM orders WHERE charge IS NOT NULL ORDER BY created DESC LIMIT 200')
+    orders=db.rows('SELECT id,user_id,product_id,stars,state,supplier_number,error,provider,created FROM orders WHERE charge IS NOT NULL ORDER BY created DESC LIMIT 200')
     tickets=db.rows('SELECT * FROM tickets ORDER BY id DESC LIMIT 200')
     for t in tickets:
         t['messages']=db.rows('SELECT * FROM messages WHERE ticket_id=? ORDER BY id',(t['id'],))
         for m in t['messages']:
             m['text']=core.unseal(m['text'])
-    return {'products':products,'orders':orders,'tickets':tickets,'balance':db.setting('balance','—'),'catalog_sync':db.setting('catalog_sync','0'),'catalog_error':db.setting('catalog_error'),'pending_messages':db.one('SELECT COUNT(*) n FROM outbox WHERE sent=0')['n'],'audit':db.rows('SELECT * FROM audit ORDER BY id DESC LIMIT 30'),'configured':{k:bool(v) for k,v in core.TOKENS.items()},'supplier_configured':bool(os.getenv('JAHA_API_KEY'))}
+
+    # Get provider info
+    manager = get_manager()
+    providers_info = manager.list_providers()
+
+    # Get balances from all providers
+    try:
+        balances = await manager.get_all_balances()
+    except Exception:
+        balances = {}
+
+    return {
+        'products':products,
+        'orders':orders,
+        'tickets':tickets,
+        'balance':db.setting('balance','—'),
+        'catalog_sync':db.setting('catalog_sync','0'),
+        'catalog_error':db.setting('catalog_error'),
+        'pending_messages':db.one('SELECT COUNT(*) n FROM outbox WHERE sent=0')['n'],
+        'audit':db.rows('SELECT * FROM audit ORDER BY id DESC LIMIT 30'),
+        'configured':{k:bool(v) for k,v in core.TOKENS.items()},
+        'supplier_configured':bool(os.getenv('JAHA_API_KEY')) or bool(os.getenv('CANBOSO_API_KEY')),
+        'providers': providers_info,
+        'balances': balances,
+    }
+
 
 class ProductEdit(BaseModel):
     visible:bool
@@ -111,15 +139,23 @@ async def product(pid:int,body:ProductEdit):
     return {'ok':True}
 
 @app.post('/api/sync')
-async def sync():
-    if not os.getenv('JAHA_API_KEY'):
-        raise HTTPException(400,'Добавьте JAHA_API_KEY в .env сервера')
+async def sync(provider: str = None):
+    from .providers.manager import get_manager
+
+    manager = get_manager()
+
+    # Check if any provider is configured
+    if not manager.providers:
+        raise HTTPException(400,'Добавьте JAHA_API_KEY или CANBOSO_API_KEY в .env сервера')
+
     try:
-        await core.sync_catalog()
+        # Sync specific provider or default
+        await core.sync_catalog(provider)
         db.set_setting('catalog_error','')
     except core.SupplierError as e:
         raise HTTPException(502,e.code)
     return {'ok':True}
+
 
 class Reply(BaseModel):
     text:str=Field(min_length=1,max_length=3500)
@@ -150,16 +186,24 @@ async def refund(oid:str):
 async def check_order(oid:str):
     o=db.one('SELECT * FROM orders WHERE id=?',(oid,))
     if not o or not o['supplier_number']:
-        raise HTTPException(400,'Нет номера поставщика. Неопределённую покупку нужно сверить с поддержкой Jaha.')
+        raise HTTPException(400,'Нет номера поставщика. Неопределённую покупку нужно сверить с поддержкой.')
     if o['state'] in ('customer_refunded','refund_pending'):
         raise HTTPException(400,'Для заказа уже оформлен возврат покупателю')
     try:
-        from urllib.parse import quote
-        snapshot=(await core.jaha('GET','/orders/'+quote(o['supplier_number'],safe='')+'?include_additions=true'))['order']
+        provider_name = o.get('provider', 'jaha')
+        snapshot = await core.check_order_status(oid, provider_name)
         core.store_snapshot(oid,snapshot)
     except core.SupplierError as e:
         raise HTTPException(502,e.code)
     return {'ok':True}
+
+@app.get('/api/providers')
+async def list_providers():
+    """List all configured providers."""
+    from .providers.manager import get_manager
+    manager = get_manager()
+    return {'providers': manager.list_providers()}
+
 
 STATIC=Path(__file__).parent/'static'
 app.mount('/static',StaticFiles(directory=STATIC),name='static')

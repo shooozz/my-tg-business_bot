@@ -9,12 +9,17 @@ from urllib.parse import quote
 import httpx
 from cryptography.fernet import Fernet
 from . import db
+from .providers.manager import get_manager
+from .providers.base import ProviderError
 
 ADMINS = {int(x) for x in os.getenv('ADMIN_IDS', '').split(',') if x.strip()}
 TOKENS = {k: os.getenv(k.upper() + '_BOT_TOKEN', '') for k in ('shop', 'admin', 'support')}
 LOCK = asyncio.Lock()
 SYNC_LOCK = asyncio.Lock()
 HTTP = httpx.AsyncClient(timeout=40)
+
+# Use ProviderError instead of SupplierError for consistency
+SupplierError = ProviderError
 
 def cipher():
     return Fernet(os.environ['DATA_KEY'].encode())
@@ -48,51 +53,111 @@ async def telegram(bot, method, payload):
     return data['result']
 
 class SupplierError(Exception):
+    """Deprecated: use ProviderError from providers.base"""
     def __init__(self, code, retry=False, delay=60):
         self.code, self.retry, self.delay = code, retry, delay
 
+# Keep old jaha() function for backward compatibility
 async def jaha(method, path, body=None, key=None):
-    async with LOCK:
-        bucket = 'post' if method == 'POST' else 'get'
-        wait = float(db.setting('rate_' + bucket, '0')) - time.time()
-        if wait > 0:
-            await asyncio.sleep(wait)
-        db.set_setting('rate_' + bucket, time.time() + (6.2 if bucket == 'post' else .65))
-        headers = {'Authorization': 'Bearer ' + os.getenv('JAHA_API_KEY', '')}
-        if key:
-            headers['Idempotency-Key'] = key
-        try:
-            r = await HTTP.request(method, 'https://api.jahadigital.shop/v1' + path, headers=headers, json=body)
-        except httpx.HTTPError:
-            raise SupplierError('network_error', True) from None
-        if r.status_code >= 400:
-            try:
-                code = r.json().get('code', 'supplier_error')
-            except ValueError:
-                code = 'supplier_error'
-            delay = max(60, int(r.headers.get('Retry-After', '60')))
-            if r.status_code == 429:
-                db.set_setting('rate_' + bucket, time.time() + delay)
-            raise SupplierError(code, r.status_code in (429,500,502,503,504) or code in ('request_in_progress','insufficient_balance'), delay)
-        return r.json()
+    """Legacy Jaha API function - use providers.JahaProvider instead."""
+    manager = get_manager()
+    try:
+        provider = manager.get_provider('jaha')
+    except ValueError:
+        raise SupplierError('jaha_not_configured', False)
 
-async def sync_catalog():
+    # Map old jaha() calls to new provider
+    try:
+        if method == 'GET':
+            if path.startswith('/products'):
+                products = await provider.get_products()
+                # Return in old format
+                return {'products': [p.provider_data for p in products], 'next_cursor': None}
+            elif path.startswith('/orders/'):
+                order_num = path.split('/')[2].split('?')[0]
+                order = await provider.get_order(order_num)
+                return {'order': order.provider_data}
+            elif path == '/account':
+                balance = await provider.get_balance()
+                return {'account': {'balance_usdt': str(balance)}}
+        elif method == 'POST' and path == '/orders':
+            # Create order - requires product_code extraction from body
+            order = await provider.create_order(
+                body['product_code'],
+                body.get('quantity', 1),
+                {'order_id': key} if key else {}
+            )
+            return {'order': order.provider_data}
+    except ProviderError as e:
+        raise SupplierError(e.code, e.retry, e.delay) from None
+    except Exception as e:
+        raise SupplierError('supplier_error', False) from e
+
+async def sync_catalog(provider_name=None):
+    """Sync products from provider(s)."""
     async with SYNC_LOCK:
-        cursor, products = None, []
-        while True:
-            path = '/products?limit=100&current_only=true' + ('&cursor=' + quote(cursor, safe='') if cursor else '')
-            page = await jaha('GET', path)
-            products.extend(page['products'])
-            cursor = page.get('next_cursor')
-            if not cursor:
-                break
+        manager = get_manager()
+
+        if provider_name:
+            # Sync specific provider
+            products = await manager.get_products(provider_name)
+        else:
+            # Sync all providers
+            all_products = await manager.get_all_products()
+            products = []
+            for prov_name, prov_products in all_products.items():
+                # Add provider prefix to product codes
+                for p in prov_products:
+                    p.code = f"{prov_name}:{p.code}"
+                    products.append(p)
+
         with db.connect() as c:
             c.execute('UPDATE products SET synced=0')
             for p in products:
-                c.execute('INSERT INTO products(code,data,synced) VALUES(?,?,?) ON CONFLICT(code) DO UPDATE SET data=excluded.data,synced=excluded.synced', (p['code'], json.dumps(p, ensure_ascii=False), time.time()))
+                # Store original provider data as JSON
+                product_data = {
+                    'title': p.name,
+                    'description': p.description,
+                    'price_usdt': p.price_usdt,
+                    'category': p.category,
+                    'available': 1 if p.in_stock else 0,
+                    'delivery_type': 'auto',
+                    **p.provider_data
+                }
+
+                c.execute(
+                    'INSERT INTO products(code,data,synced,provider) VALUES(?,?,?,?) '
+                    'ON CONFLICT(code) DO UPDATE SET data=excluded.data,synced=excluded.synced,provider=excluded.provider',
+                    (p.code, json.dumps(product_data, ensure_ascii=False), time.time(), p.code.split(':')[0] if ':' in p.code else 'jaha')
+                )
+
         db.set_setting('catalog_sync', time.time())
-        account = (await jaha('GET', '/account'))['account']
-        db.set_setting('balance', account['balance_usdt'])
+
+        # Get balance from default or specified provider
+        try:
+            balance = await manager.get_balance(provider_name)
+            db.set_setting('balance', str(balance))
+        except Exception:
+            pass
+
+async def check_order_status(oid, provider_name):
+    """Check order status with provider."""
+    o = db.one('SELECT * FROM orders WHERE id=?', (oid,))
+    if not o or not o['supplier_number']:
+        raise ProviderError('no_supplier_number', False)
+
+    manager = get_manager()
+    order = await manager.get_order(provider_name, o['supplier_number'])
+
+    # Convert to old snapshot format for compatibility
+    return {
+        'order_number': order.order_number,
+        'status': order.status,
+        'delivery': order.delivery,
+        'instructions': order.instructions,
+        **order.provider_data
+    }
+
 
 def set_product(pid, visible, stars, actor):
     if stars < 0 or stars > 1000000 or (visible and stars < 1):

@@ -6,3 +6,4 @@ data/
 *.db*
 rclone.conf
 *.tar.gz
+DEPLOY_NEW_SERVER.md
