@@ -45,11 +45,15 @@ jobs:
           pytest -v
 
       - name: Verify Docker build
-        env:
-          DOMAIN: example.com
-          ADMIN_PASSWORD: test-password-for-ci-only-min-16-chars
-          DATA_KEY: dGVzdC1rZXktZm9yLWNpLW9ubHktMzItYnl0ZXMtbG9uZw==
         run: |
+          cat > .env <<EOF
+          DOMAIN=example.com
+          ADMIN_PASSWORD=test-password-for-ci-only-min-16-chars
+          DATA_KEY=dGVzdC1rZXktZm9yLWNpLW9ubHktMzItYnl0ZXMtbG9uZw==
+          SHOP_BOT_TOKEN=test
+          ADMIN_BOT_TOKEN=test
+          SUPPORT_BOT_TOKEN=test
+          EOF
           docker compose config
           docker compose build --no-cache
 
