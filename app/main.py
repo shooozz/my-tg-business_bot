@@ -396,8 +396,25 @@ async def link_offering(oid: int, body: OfferingLink):
 
 @app.get('/api/public/shop-bot')
 async def public_shop_bot():
-    return {'username': os.getenv('SHOP_BOT_USERNAME', '').lstrip('@'),
+    return {'username': await shop_bot_username(),
             'shop_name': os.getenv('SHOP_NAME', 'ByBlock')}
+
+_BOT_USERNAME = {'value': '', 'checked': 0.0}
+
+async def shop_bot_username():
+    """SHOP_BOT_USERNAME if set, otherwise ask Telegram (getMe) with the shop token.
+    Cached; a failed lookup is retried at most every 5 minutes."""
+    configured = os.getenv('SHOP_BOT_USERNAME', '').strip().lstrip('@')
+    if configured or not core.TOKENS.get('shop'):
+        return configured
+    cache = _BOT_USERNAME
+    if not cache['value'] and time.time() - cache['checked'] > 300:
+        cache['checked'] = time.time()
+        try:
+            cache['value'] = (await core.telegram('shop', 'getMe', {})).get('username', '')
+        except Exception:
+            pass
+    return cache['value']
 
 @app.get('/api/public/categories')
 async def public_categories():
