@@ -7,3 +7,5 @@ data/
 rclone.conf
 *.tar.gz
 DEPLOY_NEW_SERVER.md
+node_modules/
+app/web/

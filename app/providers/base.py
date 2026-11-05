@@ -95,3 +95,16 @@ class BaseProvider(ABC):
             'refunded': 'refunded',
         }
         return status_map.get(provider_status.lower(), 'processing')
+
+
+def normalize_name(name: str) -> str:
+    """Normalize a product name for cross-provider dedup matching.
+
+    Lowercases, strips accents to ASCII-ish ranges we care about (Cyrillic kept),
+    collapses whitespace and removes simple punctuation. Matches names that
+    differ only in case, spacing or punctuation across providers.
+    """
+    import re
+    n = (name or '').lower().strip()
+    n = re.sub(r'[^a-z0-9а-яё]+', ' ', n)
+    return re.sub(r'\s+', ' ', n).strip()
