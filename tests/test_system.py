@@ -292,6 +292,21 @@ def test_migration_keeps_hand_set_prices(monkeypatch):
     assert rows['jaha:B']['price_locked'] == 0 and rows['jaha:B']['stars'] > 0     # had no price: auto
     assert rows['jaha:C']['price_locked'] == 0                                     # new product: auto
 
+def test_shop_bot_username_from_env_or_getme(monkeypatch):
+    from app import main
+    calls = []
+    async def fake_telegram(bot, method, payload):
+        calls.append((bot, method)); return {'username': 'byebyblock_bot'}
+    monkeypatch.setattr(core, 'telegram', fake_telegram)
+    monkeypatch.setitem(core.TOKENS, 'shop', 'token')
+    monkeypatch.setattr(main, '_BOT_USERNAME', {'value': '', 'checked': 0.0})
+    monkeypatch.setenv('SHOP_BOT_USERNAME', '@from_env_bot')
+    assert asyncio.run(main.shop_bot_username()) == 'from_env_bot' and not calls
+    monkeypatch.delenv('SHOP_BOT_USERNAME')
+    assert asyncio.run(main.shop_bot_username()) == 'byebyblock_bot'
+    assert asyncio.run(main.shop_bot_username()) == 'byebyblock_bot'
+    assert calls == [('shop', 'getMe')]  # cached after the first lookup
+
 def test_jaha_order_body_has_only_documented_fields():
     from app.providers.jaha import JahaProvider
     provider = JahaProvider('jaha_live_test'); sent = {}
