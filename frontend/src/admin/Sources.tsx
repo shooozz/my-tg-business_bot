@@ -1,0 +1,115 @@
+import { useEffect, useState } from 'react'
+import { api } from '../shared/api'
+import { ago, fmt } from '../shared/format'
+import type { Offering } from '../shared/types'
+import { Badge, Button, Empty, Modal, Spinner, useAction } from '../shared/ui'
+import { stockText, type PageProps } from './common'
+
+export function Sources({ data, reload }: PageProps) {
+  const [offers, setOffers] = useState<Offering[]>([])
+  const [filter, setFilter] = useState('all')
+  const [q, setQ] = useState('')
+  const [linking, setLinking] = useState<Offering | null>(null)
+  const { busy, run } = useAction()
+  const load = () => api<{ offerings: Offering[] }>('offerings').then(r => setOffers(r.offerings))
+  useEffect(() => { load() }, [data.catalog_sync])
+
+  const sync = (provider?: string) => run(async () => {
+    try { await api(provider ? `sync?provider=${provider}` : 'sync', 'POST') } finally { await reload(); await load() }
+  }, 'Каталог обновлён')
+
+  const byProduct = new Map(data.products.map(p => [p.id, p]))
+  const perProduct = new Map<number, number>()
+  offers.forEach(o => o.product_id && perProduct.set(o.product_id, (perProduct.get(o.product_id) ?? 0) + 1))
+  const rows = offers.filter(o => {
+    if (q && !o.name.toLowerCase().includes(q.toLowerCase())) return false
+    if (filter === 'dup') return !!o.product_id && (perProduct.get(o.product_id) ?? 0) > 1
+    if (filter === 'out') return !o.in_stock || !o.available
+    return filter === 'all' || o.provider === filter
+  })
+  const names = Object.keys(data.providers)
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold">Поставщики</h1>
+          <p className="text-sm text-slate-500">Обновление {ago(Number(data.catalog_sync))}, автоматически каждые {Math.round(data.sync_period / 60)} мин.</p>
+        </div>
+        <Button variant="primary" disabled={busy || !names.length} onClick={() => sync()}>{busy ? <Spinner /> : '↻'} Обновить всех</Button>
+      </div>
+      {data.catalog_error && <p className="card border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">Последнее обновление с ошибкой: {data.catalog_error}</p>}
+
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {names.length === 0 && <div className="card p-4 text-sm text-slate-500">Нет подключённых поставщиков. Добавьте JAHA_API_KEY или CANBOSO_API_KEY в .env на сервере.</div>}
+        {names.map(n => (
+          <div key={n} className="card p-4">
+            <div className="flex items-center justify-between"><span className="font-semibold capitalize">{n}</span><Badge tone="good">подключён</Badge></div>
+            <div className="mt-2 text-2xl font-bold">{n in data.balances ? `${fmt(data.balances[n])} USDT` : '—'}</div>
+            <div className="text-xs text-slate-500">{offers.filter(o => o.provider === n).length} позиций</div>
+            <Button className="mt-3" disabled={busy} onClick={() => sync(n)}>Обновить только {n}</Button>
+          </div>
+        ))}
+      </div>
+
+      <div className="card p-4 text-sm text-slate-600">
+        Одинаковые позиции разных поставщиков объединяются в один товар по названию. Покупатель видит цену самого дешёвого поставщика, у которого товар есть в наличии.
+        Если объединилось неверно, нажмите «Перепривязать».
+      </div>
+
+      <div className="card overflow-x-auto">
+        <div className="flex flex-wrap gap-2 border-b border-slate-100 p-3">
+          <input className="input max-w-xs" placeholder="Поиск" value={q} onChange={e => setQ(e.target.value)} aria-label="Поиск" />
+          <select className="input w-auto" value={filter} onChange={e => setFilter(e.target.value)} aria-label="Фильтр">
+            <option value="all">Все позиции</option><option value="dup">Есть у нескольких поставщиков</option><option value="out">Нет в наличии</option>
+            {names.map(n => <option key={n} value={n}>Только {n}</option>)}
+          </select>
+        </div>
+        {rows.length === 0 ? <Empty title="Нет позиций" text="Запустите обновление." /> : (
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50"><tr><th className="th">Позиция поставщика</th><th className="th">Поставщик</th><th className="th">Закупка</th><th className="th">Наличие</th><th className="th">Товар в магазине</th><th className="th" /></tr></thead>
+            <tbody>{rows.slice(0, 300).map(o => {
+              const p = o.product_id ? byProduct.get(o.product_id) : undefined
+              return (
+                <tr key={o.id} className="border-t border-slate-100">
+                  <td className="td">{o.name}<div className="text-xs text-slate-400">{o.provider_product_id}</div></td>
+                  <td className="td"><Badge>{o.provider}</Badge></td>
+                  <td className="td whitespace-nowrap">{fmt(o.price_usdt)} USDT</td>
+                  <td className="td">{o.in_stock && o.available ? stockText(o.available) : <span className="text-rose-600">нет</span>}</td>
+                  <td className="td">{p ? <>{p.data.title} {p.best_offering_id === o.id
+                    ? <Badge tone="good">цена отсюда</Badge> : (perProduct.get(p.id) ?? 0) > 1 && <Badge>дороже / нет</Badge>}</> : <span className="text-slate-400">ещё не создан</span>}</td>
+                  <td className="td text-right"><Button variant="ghost" onClick={() => setLinking(o)}>Перепривязать</Button></td>
+                </tr>
+              )
+            })}</tbody>
+          </table>
+        )}
+      </div>
+      {linking && <LinkModal o={linking} data={data} onClose={() => setLinking(null)} onDone={async () => { await reload(); await load() }} />}
+    </div>
+  )
+}
+
+function LinkModal({ o, data, onClose, onDone }: { o: Offering; data: PageProps['data']; onClose: () => void; onDone: () => Promise<void> }) {
+  const [q, setQ] = useState(o.name.split(' ')[0] ?? '')
+  const { busy, run } = useAction()
+  const list = data.products.filter(p => (p.data.title ?? '').toLowerCase().includes(q.toLowerCase())).slice(0, 50)
+  const link = (pid: number) => run(async () => {
+    await api(`offerings/${o.id}/link`, 'PUT', { product_id: pid }); await onDone(); onClose()
+  }, 'Позиция привязана')
+  return (
+    <Modal title={`Привязать «${o.name}»`} onClose={onClose}>
+      <input className="input mb-3" autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Найти товар магазина" />
+      <div className="max-h-80 space-y-1 overflow-y-auto">
+        {list.map(p => (
+          <button key={p.id} disabled={busy || p.id === o.product_id} onClick={() => link(p.id)}
+            className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-100 disabled:opacity-50">
+            <span>{p.data.title} <span className="text-xs text-slate-400">#{p.id}</span></span>
+            {p.id === o.product_id ? <Badge tone="info">сейчас</Badge> : <span className="text-xs text-slate-500">{fmt(p.stars)} ★</span>}
+          </button>
+        ))}
+        {!list.length && <p className="py-6 text-center text-sm text-slate-500">Ничего не найдено</p>}
+      </div>
+    </Modal>
+  )
+}

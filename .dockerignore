@@ -7,3 +7,5 @@ __pycache__
 tests
 docs
 *.tar.gz
+frontend/node_modules
+app/web

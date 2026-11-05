@@ -76,13 +76,14 @@ class JahaProvider(BaseProvider):
             page = await self._request('GET', path)
 
             for p in page['products']:
+                available = int(p.get('available') or 0)
                 products.append(Product(
                     code=p['code'],
-                    name=p['name'],
+                    name=p.get('title') or p.get('name') or p['code'],
                     description=p.get('description', ''),
                     price_usdt=float(p['price_usdt']),
-                    category=p.get('category', 'Другое'),
-                    in_stock=p.get('in_stock', True),
+                    category=p.get('category') or 'Другое',
+                    in_stock=p.get('status', 'available') == 'available' and available > 0,
                     min_quantity=p.get('min_quantity', 1),
                     max_quantity=p.get('max_quantity', 1),
                     provider_data=p
@@ -96,13 +97,15 @@ class JahaProvider(BaseProvider):
 
     async def create_order(self, product_code: str, quantity: int, customer_data: Dict[str, Any]) -> Order:
         """Create order via Jaha."""
-        body = {
-            'product_code': product_code,
-            'quantity': quantity,
-            **customer_data
-        }
-
+        # The Jaha API rejects unknown fields, so send only documented ones.
         idempotency_key = customer_data.get('order_id', '')
+        body = {'product_code': product_code, 'quantity': quantity}
+        if idempotency_key:
+            body['external_order_id'] = idempotency_key
+        if customer_data.get('max_unit_price_usdt') not in (None, '', '0'):
+            body['max_unit_price_usdt'] = str(customer_data['max_unit_price_usdt'])
+        if customer_data.get('buyer_input'):
+            body['buyer_input'] = customer_data['buyer_input']
         data = await self._request('POST', '/orders', body, idempotency_key)
         order_data = data['order']
 

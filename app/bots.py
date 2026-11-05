@@ -12,108 +12,118 @@ def support_url(order=''):
 def menu():
     return [[core.button('🛍 Каталог','catalog:0'),core.button('📦 Мои заказы','orders')],[core.button('💬 Поддержка',url=support_url()),core.button('Условия','terms')]]
 
-async def catalog(uid, page=0):
-    products = db.rows('SELECT * FROM products WHERE visible=1 AND stars>0 AND synced>0 ORDER BY id')
-    products = [p for p in products if json.loads(p['data'])['available'] > 0]
+def _buyer_input_req(raw_data: dict) -> dict:
+    """Normalize buyer input requirements from Jaha or Canboso raw data."""
+    bi = raw_data.get('buyer_input') or {}
+    if bi.get('required'):
+        return bi
+    req = raw_data.get('purchaseRequirements') or raw_data.get('purchase_requirements') or {}
+    if req.get('customerEmail'):
+        return {'required': True, 'fields': [{'name': 'email', 'type': 'email', 'required': True, 'max_length': 320}], 'scope': 'per_order', 'prompt': 'Введите ваш email для заказа', 'max_total_length': 320}
+    return {'required': False, 'fields': [], 'scope': 'per_order', 'max_total_length': 0}
+
+async def catalog(uid, page=0, category_id=None):
+    if category_id:
+        products = db.rows(
+            'SELECT * FROM products WHERE visible=1 AND stars>0 AND synced>0 AND category_id=? ORDER BY id',
+            (category_id,)
+        )
+    else:
+        products = db.rows('SELECT * FROM products WHERE visible=1 AND stars>0 AND synced>0 ORDER BY id')
+    products = [p for p in products if json.loads(p['data']).get('available')]
     start = max(0,page)*8
     buttons = [[core.button(f"{json.loads(p['data'])['title'][:38]} · {p['stars']} ⭐",f"product:{p['id']}")] for p in products[start:start+8]]
     nav = []
+    cat_suffix = f':{category_id}' if category_id else ''
     if page > 0:
-        nav.append(core.button('← Назад',f'catalog:{page-1}'))
+        nav.append(core.button('← Назад',f'catalog:{page-1}{cat_suffix}'))
     if start+8<len(products):
-        nav.append(core.button('Далее →',f'catalog:{page+1}'))
+        nav.append(core.button('Далее →',f'catalog:{page+1}{cat_suffix}'))
     if nav:
         buttons.append(nav)
+    if not category_id and db.rows('SELECT id FROM categories LIMIT 2'):
+        buttons.append([core.button('📂 Категории','catalog_cats')])
     buttons.append([core.button('Главное меню','home')])
-    core.say('shop',uid,'Каталог · выберите товар' if products else 'Каталог пока готовится. Обратитесь в поддержку или загляните позже.',buttons)
+    label = 'Каталог · выберите товар' if products else 'Каталог пока готовится. Обратитесь в поддержку или загляните позже.'
+    if category_id:
+        cat = db.one('SELECT name FROM categories WHERE id=?',(category_id,))
+        if cat:
+            label = f"📂 {cat['name']} · выберите товар"
+    core.say('shop',uid,label,buttons)
+
+async def categories_menu(uid):
+    cats = db.rows(
+        'SELECT c.id, c.name, COUNT(p.id) AS cnt FROM categories c '
+        'LEFT JOIN products p ON p.category_id=c.id AND p.visible=1 AND p.stars>0 '
+        "AND json_extract(p.data,'$.available')>0 "
+        'GROUP BY c.id ORDER BY c.sort_order'
+    )
+    buttons = [[core.button(f"📂 {c['name']} ({c['cnt']})",f"catalog:0:{c['id']}")] for c in cats if c['cnt']]
+    if not buttons:
+        buttons = [[core.button('Все товары','catalog:0')]]
+    buttons.append([core.button('Главное меню','home')])
+    core.say('shop',uid,'Категории товаров:',buttons)
 
 async def product_card(uid, pid):
-    row = db.one('SELECT * FROM products WHERE id=? AND visible=1 AND synced>0',(pid,))
+    """Serve product card entirely from DB — no live provider API calls."""
+    row = db.one(
+        'SELECT p.*, o.delivery_type AS o_delivery, o.available AS o_avail, '
+        'o.min_quantity AS o_min, o.max_quantity AS o_max '
+        'FROM products p LEFT JOIN provider_offerings o ON p.best_offering_id=o.id '
+        'WHERE p.id=? AND p.visible=1', (pid,)
+    )
     if not row:
         raise ValueError('Товар больше не продаётся')
-
-    # Get product from provider
-    provider_name = row.get('provider', 'jaha')
-    product_code = row['code'].split(':')[-1]  # Remove provider prefix if exists
-
-    from .providers.manager import get_manager
-    manager = get_manager()
-
-    try:
-        # Fetch fresh product data
-        p_obj = await manager.get_provider(provider_name).get_products()
-        p_obj = next((p for p in p_obj if p.code == product_code), None)
-
-        if not p_obj:
-            raise ValueError('Товар больше не продаётся')
-
-        # Convert to old format
-        p = p_obj.provider_data
-        p['title'] = p_obj.name
-        p['description'] = p_obj.description
-        p['price_usdt'] = p_obj.price_usdt
-        p['status'] = 'available' if p_obj.in_stock else 'unavailable'
-        p['available'] = 1 if p_obj.in_stock else 0
-        p['min_quantity'] = p_obj.min_quantity
-        p['max_quantity'] = p_obj.max_quantity
-    except Exception:
-        # Fallback to cached data
-        p = json.loads(row['data'])
-
-    db.execute('UPDATE products SET data=?,synced=? WHERE id=?',(json.dumps(p,ensure_ascii=False),time.time(),pid))
-    qty = p.get('min_quantity', 1)
-    text = f"{p['title']} · {p.get('variant', '')}\n\n{p.get('description', '')}\n\nСрок: {p.get('period', 'не указан')}\nВыдача: {'автоматическая' if p.get('delivery_type')=='automatic' else 'ручная, срок не гарантируется'}\nЗаказ: {qty} шт. × {row['stars']} ⭐ = {qty*row['stars']} ⭐"
+    p = json.loads(row['data'])
+    qty = row.get('o_min') or p.get('min_quantity', 1)
+    delivery = 'автоматическая' if (row.get('o_delivery') or p.get('delivery_type','')) in ('automatic','auto') else 'ручная, срок не гарантируется'
+    text = f"{p.get('title','')} · {p.get('variant','')}\n\n{p.get('description','')}\n\nСрок: {p.get('period','не указан')}\nВыдача: {delivery}\nЗаказ: {qty} шт. × {row['stars']} ⭐ = {qty*row['stars']} ⭐"
+    available = row.get('o_avail') or p.get('available', 0)
+    max_qty = row.get('o_max') or p.get('max_quantity', 1)
     buttons = []
-    if p.get('status')=='available' and p.get('available', 0)>=qty and qty<=p.get('max_quantity', 1):
-        choices=sorted({qty,5,10})
-        buttons.append([core.button(f'{n} шт. · {n*row["stars"]} ⭐',f'buy:{pid}:{n}') for n in choices if qty<=n<=min(p.get('available', 0),p.get('max_quantity', 1))])
+    if available >= qty and qty <= max_qty:
+        choices = sorted({qty, 5, 10})
+        buttons.append([core.button(f'{n} шт. · {n*row["stars"]} ⭐',f'buy:{pid}:{n}') for n in choices if qty<=n<=min(available,max_qty)])
     buttons.append([core.button('← Каталог','catalog:0'),core.button('Поддержка',url=support_url())])
     core.say('shop',uid,text,buttons)
 
 
 async def begin_order(uid, pid, quantity=None):
+    """Create a purchase draft from cached DB data — no live provider calls."""
     if not os.getenv('SHOP_TERMS'):
         raise ValueError('Продажи ещё не открыты: магазин настраивает условия.')
-    row = db.one('SELECT * FROM products WHERE id=? AND visible=1 AND stars>0 AND synced>0',(pid,))
+    row = db.one(
+        'SELECT p.*, o.provider_product_id AS o_code, o.provider AS o_provider, '
+        'o.min_quantity AS o_min, o.max_quantity AS o_max, o.available AS o_avail, '
+        'o.product_type, o.raw_data '
+        'FROM products p LEFT JOIN provider_offerings o ON p.best_offering_id=o.id '
+        'WHERE p.id=? AND p.visible=1 AND p.stars>0', (pid,)
+    )
     if not row:
         raise ValueError('Товар недоступен')
-
-    # Get product from provider
-    provider_name = row.get('provider', 'jaha')
-    product_code = row['code'].split(':')[-1]
-
-    from .providers.manager import get_manager
-    manager = get_manager()
-
-    try:
-        p_obj = await manager.get_provider(provider_name).get_products()
-        p_obj = next((p for p in p_obj if p.code == product_code), None)
-
-        if not p_obj:
-            raise ValueError('Товар недоступен')
-
-        p = p_obj.provider_data
-        p['title'] = p_obj.name
-        p['code'] = p_obj.code
-        p['price_usdt'] = p_obj.price_usdt
-        p['status'] = 'available' if p_obj.in_stock else 'unavailable'
-        p['available'] = 1 if p_obj.in_stock else 0
-        p['min_quantity'] = p_obj.min_quantity
-        p['max_quantity'] = p_obj.max_quantity
-    except Exception:
-        p = json.loads(row['data'])
-
-    qty = quantity if quantity is not None else p.get('min_quantity', 1)
-    if p.get('status')!='available' or p.get('available', 0)<qty or p.get('max_quantity', 1)<qty or qty<p.get('min_quantity', 1):
+    p = json.loads(row['data'])
+    provider = row.get('o_provider') or row.get('provider', 'jaha')
+    product_code = row.get('o_code') or str(row.get('code', '')).split(':')[-1]
+    raw = json.loads(row['raw_data'] or '{}') if row.get('raw_data') else {}
+    min_qty = row.get('o_min') or p.get('min_quantity', 1)
+    max_qty = row.get('o_max') or p.get('max_quantity', 1)
+    available = row.get('o_avail') or p.get('available', 0)
+    qty = quantity if quantity is not None else min_qty
+    if not p.get('available') or available < qty or max_qty < qty or qty < min_qty:
         raise ValueError('Товар закончился')
     oid = uuid.uuid4().hex
-    body = {'product_code':p['code'],'quantity':qty,'max_unit_price_usdt':p.get('price_usdt', '0'),'external_order_id':oid}
-    draft = {'id':oid,'pid':pid,'body':body,'stars':row['stars']*qty,'product':p,'answers':[],'step':0,'created':time.time(),'provider':provider_name}
-    db.set_setting(f'draft:{uid}',core.seal(draft))
-    if p.get('buyer_input', {}).get('required'):
-        await ask_field(uid,draft)
+    body = {'product_code': product_code, 'quantity': qty,
+            'max_unit_price_usdt': str(row.get('base_price_usdt') or 0),
+            'external_order_id': oid}
+    buyer_input_req = _buyer_input_req(raw)
+    draft = {'id': oid, 'pid': pid, 'body': body, 'stars': row['stars']*qty,
+             'product': {**p, 'code': product_code, 'buyer_input': buyer_input_req},
+             'answers': [], 'step': 0, 'created': time.time(), 'provider': provider}
+    db.set_setting(f'draft:{uid}', core.seal(draft))
+    if buyer_input_req.get('required'):
+        await ask_field(uid, draft)
     else:
-        confirm_order(uid,draft)
+        confirm_order(uid, draft)
 
 
 def input_fields(draft):
@@ -157,12 +167,24 @@ async def shop_update(update):
     elif text=='/terms' or data=='terms':
         core.say('shop',uid,os.getenv('SHOP_TERMS','Условия пока не опубликованы.'),menu())
     elif text.startswith('/start') or data=='home':
-        core.say('shop',uid,'Добро пожаловать!\nВыберите товар, оплатите Stars и получите заказ здесь. Все вопросы решает наша поддержка.',menu())
+        param = text.split(' ', 1)[1].strip() if text.startswith('/start') and ' ' in text else ''
+        if param.startswith('buy_'):
+            try:
+                await product_card(uid, int(param[4:]))
+            except (ValueError, IndexError):
+                core.say('shop', uid, 'Товар не найден.', menu())
+        else:
+            core.say('shop',uid,'Добро пожаловать!\nВыберите товар, оплатите Stars и получите заказ здесь. Все вопросы решает наша поддержка.',menu())
     elif text=='/cancel' or data=='cancel':
         db.execute('DELETE FROM settings WHERE key=?',(f'draft:{uid}',))
         core.say('shop',uid,'Оформление отменено.',menu())
+    elif data=='catalog_cats':
+        await categories_menu(uid)
     elif data.startswith('catalog:'):
-        await catalog(uid,int(data.split(':')[1]))
+        parts = data.split(':')
+        page = int(parts[1]) if len(parts) > 1 else 0
+        cat_id = int(parts[2]) if len(parts) > 2 else None
+        await catalog(uid, page, cat_id)
     elif data.startswith('product:'):
         await product_card(uid,int(data.split(':')[1]))
     elif data.startswith('buy:'):
@@ -248,10 +270,24 @@ async def admin_update(update, bot='admin'):
     parts=text.split(maxsplit=2)
     command=parts[0] if parts else ''
     if command in ('/start','/admin','home'):
-        core.say(bot,uid,'Управление магазином\n\n/price ID Stars — изменить цену\n/show ID · /hide ID — видимость\n/reply Номер текст — ответ поддержки\n/close Номер — закрыть обращение\n/refund ID_заказа — вернуть Stars после подтверждения поставщика',[[core.button('Товары','/products'),core.button('Заказы','/orders')],[core.button('Поддержка','/tickets'),core.button('Обновить каталог','/sync')],[core.button('Веб-админка',url=os.getenv('PUBLIC_URL','https://example.com'))]])
+        core.say(bot,uid,'Управление магазином\n\n/price ID Stars — изменить цену\n/show ID · /hide ID — видимость\n/reply Номер текст — ответ поддержки\n/close Номер — закрыть обращение\n/refund ID_заказа — вернуть Stars после подтверждения поставщика\n/markup N — наценка %\n/rate N — курс USDT→Stars\n/sync [провайдер] — синхронизация\n/unmatched — несопоставленные предложения',[[core.button('Товары','/products'),core.button('Заказы','/orders')],[core.button('Поддержка','/tickets'),core.button('Синхр.','/sync')],[core.button('Веб-админка',url=os.getenv('PUBLIC_URL','https://example.com'))]])
     elif command=='/sync':
-        await core.sync_catalog()
-        core.say(bot,uid,'Каталог обновлён. Баланс: '+db.setting('balance','—')+' USDT')
+        prov = parts[1] if len(parts)>1 else None
+        await core.sync_catalog(prov)
+        core.say(bot,uid,f"Каталог обновлён{' от '+prov if prov else ''}. Баланс: {db.setting('balance','—')} USDT")
+    elif command in ('/markup','/rate'):
+        try:
+            value=float(parts[1].replace(',','.'))
+        except (IndexError,ValueError):
+            raise ValueError(f'Формат: {command} число')
+        if command=='/markup' and not 0<=value<=500 or command=='/rate' and not 0<value<=10000:
+            raise ValueError('Недопустимое значение')
+        db.set_setting('markup_percent' if command=='/markup' else 'usdt_to_stars_rate',value)
+        core.rebuild_prices(); core.audit(uid,f'{command[1:]}:{value}')
+        core.say(bot,uid,(f'Наценка: {value:g}%' if command=='/markup' else f'Курс USDT→Stars: {value:g}')+'. Цены пересчитаны.')
+    elif command=='/unmatched':
+        n=db.one('SELECT COUNT(*) n FROM provider_offerings WHERE product_id IS NULL')['n']
+        core.say(bot,uid,f'Несопоставленных предложений: {n}. Сопоставьте в веб-админке → «Провайдеры».' if n else 'Все предложения сопоставлены.')
     elif command=='/products':
         products=db.rows('SELECT * FROM products ORDER BY id LIMIT 80')
         core.say(bot,uid,'\n'.join(f"#{p['id']} · {'В продаже' if p['visible'] else 'Скрыт'} · {p['stars']} ⭐ · {json.loads(p['data'])['title']}" for p in products) or 'Каталог пуст. /sync')
