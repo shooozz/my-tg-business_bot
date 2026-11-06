@@ -26,6 +26,7 @@ async def lifespan(app):
     core.cipher()
     tasks=[]
     if os.getenv('RUN_BOTS','true')=='true':
+        asyncio.create_task(core.setup_bots())
         tasks=[asyncio.create_task(core.worker()),asyncio.create_task(core.send_outbox())]
         tasks += [asyncio.create_task(bots.poll(k)) for k,v in core.TOKENS.items() if v]
     yield
@@ -138,6 +139,11 @@ async def dashboard():
         'auto_publish': db.setting('auto_publish', '1') == '1',
         'usdt_to_stars_rate': float(db.setting('usdt_to_stars_rate', '50')),
         'vnd_to_usdt_rate': float(db.setting('vnd_to_usdt_rate', '0.00004')),
+        'rub_rate': float(db.setting('rub_rate', '90')),
+        'pay_stars_enabled': db.setting('pay_stars_enabled', '1') == '1',
+        'pay_crypto_enabled': db.setting('pay_crypto_enabled', '0') == '1',
+        'pay_rub_enabled': db.setting('pay_rub_enabled', '0') == '1',
+        'pay_rub_provider': db.setting('pay_rub_provider', 'okassa'),
         'offering_count': db.one('SELECT COUNT(*) n FROM provider_offerings')['n'],
         'unmatched_count': db.one('SELECT COUNT(*) n FROM provider_offerings WHERE product_id IS NULL')['n'],
     }
@@ -341,6 +347,14 @@ class SettingsEdit(BaseModel):
     vnd_to_usdt_rate: float = Field(gt=0)
     sync_period: int = Field(ge=60, le=86400)
     auto_publish: bool = True
+    rub_rate: float = Field(default=90, gt=0, le=100000)
+    rub_rate_locked: bool = False
+    pay_stars_enabled: bool = True
+    pay_crypto_enabled: bool = False
+    pay_crypto_token: str = Field(default='', max_length=256)
+    pay_rub_enabled: bool = False
+    pay_rub_provider: str = Field(default='okassa', pattern=r'^(okassa|ymoney|tinkoff)$')
+    pay_rub_api_key: str = Field(default='', max_length=512)
 
 @app.get('/api/settings')
 async def get_settings():
@@ -350,11 +364,30 @@ async def get_settings():
         'vnd_to_usdt_rate': float(db.setting('vnd_to_usdt_rate', '0.00004')),
         'sync_period': int(db.setting('sync_period', '900')),
         'auto_publish': db.setting('auto_publish', '1') == '1',
+        'rub_rate': float(db.setting('rub_rate', '90')),
+        'rub_rate_locked': db.setting('rub_rate_locked', '0') == '1',
+        'pay_stars_enabled': db.setting('pay_stars_enabled', '1') == '1',
+        'pay_crypto_enabled': db.setting('pay_crypto_enabled', '0') == '1',
+        'pay_crypto_token': '***' if db.setting('pay_crypto_token') else '',
+        'pay_rub_enabled': db.setting('pay_rub_enabled', '0') == '1',
+        'pay_rub_provider': db.setting('pay_rub_provider', 'okassa'),
+        'pay_rub_api_key': '***' if db.setting('pay_rub_api_key') else '',
     }
 
 @app.put('/api/settings')
 async def update_settings(body: SettingsEdit):
     db.set_setting('auto_publish', '1' if body.auto_publish else '0')
+    db.set_setting('rub_rate', str(body.rub_rate))
+    db.set_setting('rub_rate_locked', '1' if body.rub_rate_locked else '0')
+    db.set_setting('pay_stars_enabled', '1' if body.pay_stars_enabled else '0')
+    db.set_setting('pay_crypto_enabled', '1' if body.pay_crypto_enabled else '0')
+    # Only update token/key if a real value is sent (not the masked '***')
+    if body.pay_crypto_token and body.pay_crypto_token != '***':
+        db.set_setting('pay_crypto_token', body.pay_crypto_token)
+    db.set_setting('pay_rub_enabled', '1' if body.pay_rub_enabled else '0')
+    db.set_setting('pay_rub_provider', body.pay_rub_provider)
+    if body.pay_rub_api_key and body.pay_rub_api_key != '***':
+        db.set_setting('pay_rub_api_key', body.pay_rub_api_key)
     db.set_setting('markup_percent', str(body.markup_percent))
     db.set_setting('usdt_to_stars_rate', str(body.usdt_to_stars_rate))
     db.set_setting('vnd_to_usdt_rate', str(body.vnd_to_usdt_rate))
@@ -443,11 +476,13 @@ async def public_products(category_id: int = None, page: int = 0, q: str = ''):
             continue
         if q_lower and q_lower not in d.get('title', '').lower() and q_lower not in d.get('description', '').lower():
             continue
+        prices = core.price_display(p['base_price_usdt'] or 0)
         result.append({'id': p['id'], 'name': d.get('title', ''), 'description': d.get('description', ''),
                         'stars': p['stars'], 'category_id': p['category_id'],
                         'delivery_type': d.get('delivery_type', 'automatic'),
                         'image': d.get('image', ''), 'emoji': d.get('emoji', ''),
-                        'available': d.get('available', 0)})
+                        'available': d.get('available', 0),
+                        'price_usdt': prices['price_usdt'], 'price_rub': prices['price_rub']})
     start = page * 20
     return {'products': result[start:start+20], 'total': len(result), 'page': page}
 
@@ -462,13 +497,25 @@ async def public_product(pid: int):
     if not row:
         raise HTTPException(404, 'Товар не найден')
     d = json.loads(row['data'])
+    prices = core.price_display(row['base_price_usdt'] or 0)
     return {
         'id': row['id'], 'name': d.get('title', ''), 'description': d.get('description', ''),
         'stars': row['stars'], 'category_id': row['category_id'],
         'delivery_type': row.get('o_delivery') or d.get('delivery_type', 'automatic'),
         'image': d.get('image', ''), 'emoji': d.get('emoji', ''),
         'available': d.get('available', 0),
-        'min_quantity': row.get('min_quantity', 1), 'max_quantity': row.get('max_quantity', 1),
+        'min_quantity': row.get('min_quantity') or 1, 'max_quantity': row.get('max_quantity') or 1,
+        'price_usdt': prices['price_usdt'], 'price_rub': prices['price_rub'],
+    }
+
+
+@app.get('/api/public/pay-methods')
+async def public_pay_methods():
+    """Which payment methods are currently active (for the storefront buy button)."""
+    return {
+        'stars': db.setting('pay_stars_enabled', '1') == '1',
+        'crypto': db.setting('pay_crypto_enabled', '0') == '1',
+        'rub': db.setting('pay_rub_enabled', '0') == '1',
     }
 
 

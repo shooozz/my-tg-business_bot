@@ -1,16 +1,74 @@
 @import "tailwindcss";
 
-@layer base {
-  body { @apply text-slate-900 antialiased; font-feature-settings: "tnum"; }
+/* ── Theme tokens ──────────────────────────────────────────────────────────── */
+
+/* Dark theme (default) */
+:root {
+  --c-bg:      #0f1117;
+  --c-bg2:     #1a1d27;
+  --c-bg3:     #22263a;
+  --c-border:  #2e3354;
+  --c-text:    #e8eaf6;
+  --c-muted:   #8892b0;
+  --c-accent:  #6366f1;
+  --c-acc-hov: #4f46e5;
+  --c-good:    #10b981;
+  --c-bad:     #ef4444;
+  --c-warn:    #f59e0b;
+  --c-card-bg: #1a1d27;
+  --c-input-bg:#22263a;
+  --c-shadow:  0 1px 4px rgba(0,0,0,.40);
 }
 
+/* Light theme */
+[data-theme="light"] {
+  --c-bg:      #f8fafc;
+  --c-bg2:     #ffffff;
+  --c-bg3:     #f1f5f9;
+  --c-border:  #e2e8f0;
+  --c-text:    #0f172a;
+  --c-muted:   #64748b;
+  --c-accent:  #6366f1;
+  --c-acc-hov: #4338ca;
+  --c-good:    #059669;
+  --c-bad:     #dc2626;
+  --c-warn:    #d97706;
+  --c-card-bg: #ffffff;
+  --c-input-bg:#ffffff;
+  --c-shadow:  0 1px 3px rgba(0,0,0,.10);
+}
+
+/* ── Base ──────────────────────────────────────────────────────────────────── */
+@layer base {
+  html  { background: var(--c-bg); color: var(--c-text); }
+  body  { @apply antialiased; font-feature-settings: "tnum"; min-height: 100vh; background: var(--c-bg); color: var(--c-text); }
+  ::selection { background: var(--c-accent); color: #fff; }
+  /* Smooth colour transitions when switching theme */
+  *, *::before, *::after { transition: background-color .2s, border-color .2s, color .2s; }
+}
+
+/* ── Components ────────────────────────────────────────────────────────────── */
 @layer components {
   .input {
-    @apply w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none
-      transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 disabled:bg-slate-100 disabled:text-slate-500;
+    @apply w-full rounded-lg px-3 py-2 text-sm outline-none transition;
+    background: var(--c-input-bg);
+    color: var(--c-text);
+    border: 1px solid var(--c-border);
   }
-  .card { @apply rounded-2xl border border-slate-200 bg-white shadow-sm; }
-  .label { @apply mb-1 block text-xs font-medium text-slate-500; }
-  .th { @apply px-3 py-2 text-left text-xs font-medium uppercase tracking-wide text-slate-500; }
-  .td { @apply px-3 py-2 align-middle; }
+  .input:focus {
+    border-color: var(--c-accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--c-accent) 20%, transparent);
+  }
+  .input:disabled { opacity: .5; cursor: not-allowed; }
+
+  .card {
+    @apply rounded-2xl;
+    background: var(--c-card-bg);
+    border: 1px solid var(--c-border);
+    box-shadow: var(--c-shadow);
+  }
+
+  .label { @apply mb-1 block text-xs font-medium; color: var(--c-muted); }
+  .th    { @apply px-3 py-2 text-left text-xs font-medium uppercase tracking-wide; color: var(--c-muted); }
+  .td    { @apply px-3 py-2 align-middle; }
 }

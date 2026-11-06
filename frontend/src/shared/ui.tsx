@@ -1,4 +1,21 @@
 import { useEffect, useState, type ButtonHTMLAttributes, type ReactNode } from 'react'
+import { getTheme, toggleTheme, type Theme } from './theme'
+
+/** Calls toggleTheme and returns current theme via a state. */
+export function ThemeToggle() {
+  const [theme, setTheme] = useState<Theme>(() => getTheme())
+  return (
+    <button
+      onClick={() => setTheme(toggleTheme())}
+      aria-label="Переключить тему"
+      title={theme === 'dark' ? 'Переключить на светлую тему' : 'Переключить на тёмную тему'}
+      className="rounded-lg px-2 py-1.5 text-sm transition hover:opacity-80"
+      style={{ color: 'var(--c-muted)', background: 'var(--c-bg3)' }}
+    >
+      {theme === 'dark' ? '☀️' : '🌙'}
+    </button>
+  )
+}
 
 type Variant = 'primary' | 'secondary' | 'ghost' | 'danger'
 const VARIANTS: Record<Variant, string> = {

@@ -10,7 +10,8 @@ def support_url(order=''):
     return 'https://t.me/' + os.getenv('SUPPORT_BOT_USERNAME','support_bot').lstrip('@') + ('?start='+order if order else '')
 
 def menu():
-    return [[core.button('🛍 Каталог','catalog:0'),core.button('📦 Мои заказы','orders')],[core.button('💬 Поддержка',url=support_url()),core.button('Условия','terms')]]
+    return [[core.button('🛍️ Каталог','catalog:0'), core.button('📦 Мои заказы','orders')],
+            [core.button('💬 Поддержка', url=support_url()), core.button('📋 Условия','terms')]]
 
 def _buyer_input_req(raw_data: dict) -> dict:
     """Normalize buyer input requirements from Jaha or Canboso raw data."""
@@ -44,7 +45,7 @@ async def catalog(uid, page=0, category_id=None):
     if not category_id and db.rows('SELECT id FROM categories LIMIT 2'):
         buttons.append([core.button('📂 Категории','catalog_cats')])
     buttons.append([core.button('Главное меню','home')])
-    label = 'Каталог · выберите товар' if products else 'Каталог пока готовится. Обратитесь в поддержку или загляните позже.'
+    label = '🛍️ Каталог — выберите товар' if products else '⏳ Магазин пополняется. Загляни чуть позже или напиши в поддержку!'
     if category_id:
         cat = db.one('SELECT name FROM categories WHERE id=?',(category_id,))
         if cat:
@@ -62,7 +63,7 @@ async def categories_menu(uid):
     if not buttons:
         buttons = [[core.button('Все товары','catalog:0')]]
     buttons.append([core.button('Главное меню','home')])
-    core.say('shop',uid,'Категории товаров:',buttons)
+    core.say('shop',uid,'📂 Категории — выбери раздел:',buttons)
 
 async def product_card(uid, pid):
     """Serve product card entirely from DB — no live provider API calls."""
@@ -73,11 +74,15 @@ async def product_card(uid, pid):
         'WHERE p.id=? AND p.visible=1', (pid,)
     )
     if not row:
-        raise ValueError('Товар больше не продаётся')
+        raise ValueError('😔 Этот товар временно недоступен. Загляни в каталог — там ещё много классного!')
     p = json.loads(row['data'])
     qty = row.get('o_min') or p.get('min_quantity', 1)
-    delivery = 'автоматическая' if (row.get('o_delivery') or p.get('delivery_type','')) in ('automatic','auto') else 'ручная, срок не гарантируется'
-    text = f"{p.get('title','')} · {p.get('variant','')}\n\n{p.get('description','')}\n\nСрок: {p.get('period','не указан')}\nВыдача: {delivery}\nЗаказ: {qty} шт. × {row['stars']} ⭐ = {qty*row['stars']} ⭐"
+    delivery = '⚡ Автоматическая, сразу после оплаты' if (row.get('o_delivery') or p.get('delivery_type','')) in ('automatic','auto') else '🕐 Ручная выдача, срок зависит от продавца'
+    text = (f"{'📦 ' + p.get('title','')}\n{p.get('variant','')}\n\n"
+            f"{p.get('description','')}\n\n"
+            f"⏱ Срок: {p.get('period','не указан')}\n"
+            f"🚀 Выдача: {delivery}\n\n"
+            f"🛒 Заказ: {qty} шт. × {row['stars']} ⭐ = {qty*row['stars']} ⭐")
     available = row.get('o_avail') or p.get('available', 0)
     max_qty = row.get('o_max') or p.get('max_quantity', 1)
     buttons = []
@@ -138,7 +143,7 @@ async def ask_field(uid,draft):
     core.say('shop',uid,f"{draft['product']['buyer_input'].get('prompt') or 'Данные для выполнения заказа'}\n\nЕдиница {i+1}, поле: {field['name']} (до {field['max_length']} символов).\nОтправляя данные, вы соглашаетесь передать их поставщику для выполнения заказа. /cancel — отменить.")
 
 def confirm_order(uid,draft):
-    core.say('shop',uid,f"Проверьте заказ\n{draft['product']['title']}\nКоличество: {draft['body']['quantity']}\nИтого: {draft['stars']} ⭐\n\n{os.getenv('SHOP_TERMS','Условия не настроены')}\n\nНажимая кнопку, вы принимаете условия магазина и товара. Счёт действует 15 минут.",[[core.button('Принимаю условия · оплатить','confirm:'+draft['id'])],[core.button('Отмена','cancel')]])
+    core.say('shop',uid,f'Проверь заказ 👇\n\n🛒 {draft["product"]["title"]}\nКоличество: {draft["body"]["quantity"]} шт.\n💰 Итого: {draft["stars"]} ⭐\n\n{os.getenv("SHOP_TERMS","Условия не настроены")}\n\n✅ Нажимая кнопку, ты принимаешь условия магазина и товара. Счёт действует 15 минут.',[[core.button('✅ Принимаю · оплатить','confirm:'+draft['id'])],[core.button('❌ Отмена','cancel')]])
 
 async def shop_update(update):
     if 'pre_checkout_query' in update:
