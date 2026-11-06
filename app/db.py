@@ -13,6 +13,16 @@ DEFAULT_SETTINGS = {
     'sync_period': '900',
     # New supplier positions go on sale right away ("what they add, I have").
     'auto_publish': '1',
+    # RUB/USDT exchange rate (auto-updated from CBR, overridable in admin).
+    'rub_rate': '90',
+    'rub_rate_locked': '0',  # set to '1' if admin manually overrides the rate
+    # Payment methods
+    'pay_stars_enabled': '1',
+    'pay_crypto_enabled': '0',
+    'pay_crypto_token': '',
+    'pay_rub_enabled': '0',
+    'pay_rub_provider': 'okassa',
+    'pay_rub_api_key': '',
 }
 
 @contextmanager
@@ -97,7 +107,12 @@ def init():
             c.execute('UPDATE products SET price_locked=1 WHERE stars>0')
             c.execute("INSERT INTO settings VALUES('migrated_price_locks','1')")
 
-        # Default settings
+        # v2: user asked to clear all hand-set price locks so auto-markup takes over
+        if not db_one(c, "SELECT value FROM settings WHERE key='v2_unlock_prices'"):
+            c.execute('UPDATE products SET price_locked=0')
+            c.execute("INSERT INTO settings VALUES('v2_unlock_prices','1')")
+
+        # Default settings (inside the same transaction)
         for k, v in DEFAULT_SETTINGS.items():
             if not db_one(c, 'SELECT value FROM settings WHERE key=?', (k,)):
                 c.execute('INSERT INTO settings VALUES(?,?)', (k, v))

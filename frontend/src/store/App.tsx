@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, errText } from '../shared/api'
 import type { PublicCategory, PublicProduct } from '../shared/types'
-import { Spinner } from '../shared/ui'
+import { Spinner, ThemeToggle } from '../shared/ui'
 import { ProductCard } from './ProductCard'
 import { ProductView } from './ProductView'
 
@@ -66,7 +66,8 @@ export function App() {
             <span className="hidden sm:inline">{name}</span>
           </a>
           <input value={q} onChange={e => setQ(e.target.value)} placeholder="Найти товар…" aria-label="Поиск"
-            className="input ml-auto max-w-md rounded-full bg-slate-100 px-4 focus:bg-white" />
+            className="input ml-auto max-w-md rounded-full px-4" />
+          <ThemeToggle />
           {shop.username && <a href={`https://t.me/${shop.username}`} target="_blank" rel="noopener"
             className="hidden rounded-full bg-[#229ED9] px-4 py-2 text-sm font-semibold text-white sm:block">Открыть бота</a>}
         </div>
@@ -74,9 +75,9 @@ export function App() {
 
       <section className="mx-auto max-w-6xl px-4 pt-10 pb-6">
         <h1 className="text-3xl font-extrabold tracking-tight sm:text-5xl">Цифровые товары<br /><span className="bg-gradient-to-r from-indigo-600 to-violet-600 bg-clip-text text-transparent">с мгновенной выдачей</span></h1>
-        <p className="mt-3 max-w-xl text-slate-600">Выберите товар, оплатите Telegram Stars и получите его в боте. Поддержка отвечает там же.</p>
+        <p className="mt-3 max-w-xl text-slate-600">Выберите товар, оплатите удобным способом и получите его в Telegram-боте. Поддержка отвечает там же.</p>
         <div className="mt-5 flex flex-wrap gap-2 text-sm text-slate-600">
-          {['⭐ Оплата Stars', '⚡ Автовыдача', '🔒 Данные шифруются', '💬 Живая поддержка'].map(t => <span key={t} className="rounded-full bg-white px-3 py-1 ring-1 ring-slate-200">{t}</span>)}
+          {['💳 Любые способы оплаты', '⚡ Автовыдача', '🔒 Данные шифруются', '💬 Живая поддержка'].map(t => <span key={t} className="rounded-full bg-white px-3 py-1 ring-1 ring-slate-200">{t}</span>)}
         </div>
       </section>
 

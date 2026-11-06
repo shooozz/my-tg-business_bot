@@ -72,6 +72,14 @@ export interface Dashboard {
   vnd_to_usdt_rate: number
   sync_period: number
   auto_publish: boolean
+  rub_rate: number
+  rub_rate_locked?: boolean
+  pay_stars_enabled: boolean
+  pay_crypto_enabled: boolean
+  pay_crypto_token?: string
+  pay_rub_enabled: boolean
+  pay_rub_provider: string
+  pay_rub_api_key?: string
   offering_count: number
   unmatched_count: number
 }
@@ -98,6 +106,8 @@ export interface PublicProduct {
   delivery_type: string
   image: string
   emoji: string
+  price_usdt: number
+  price_rub: number
   available: number
 }
 

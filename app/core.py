@@ -195,6 +195,59 @@ def _auto_match_offerings():
                 name_index.setdefault(nn, []).append(pid)
 
 
+async def _refresh_rub_rate():
+    """Fetch USDT≈USD/RUB rate from CBR once per hour and cache in settings.
+    Skipped when rub_rate_locked=1 (admin set a manual value)."""
+    if db.setting('rub_rate_locked', '0') == '1':
+        return
+    last = float(db.setting('rub_rate_updated', '0'))
+    if time.time() - last < 3600:
+        return
+    try:
+        r = await HTTP.get('https://www.cbr-xml-daily.ru/daily_json.js', timeout=10)
+        usd = r.json()['Valute']['USD']['Value']  # RUB per 1 USD
+        db.set_setting('rub_rate', str(round(usd, 2)))
+        db.set_setting('rub_rate_updated', str(time.time()))
+    except Exception:
+        pass  # keep the previous value
+
+
+def price_display(base_price_usdt: float) -> dict:
+    """Return price_usdt and price_rub with global markup applied."""
+    markup = float(db.setting('markup_percent', '10')) / 100
+    rub_rate = float(db.setting('rub_rate', '90'))
+    price_usdt = round(base_price_usdt * (1 + markup), 2)
+    price_rub = round(price_usdt * rub_rate)
+    return {'price_usdt': price_usdt, 'price_rub': price_rub}
+
+
+async def setup_bots():
+    """One-time setup called at startup: bot commands list and menu button."""
+    shop_token = TOKENS.get('shop')
+    public_url = os.getenv('PUBLIC_URL', '')
+    if not shop_token:
+        return
+    try:
+        commands = [
+            {'command': 'start', 'description': '🏠 Главное меню'},
+            {'command': 'catalog', 'description': '🛍️ Каталог товаров'},
+            {'command': 'orders', 'description': '📦 Мои заказы'},
+            {'command': 'support', 'description': '💬 Поддержка'},
+        ]
+        await telegram('shop', 'setMyCommands', {'commands': commands})
+        if public_url:
+            await telegram('shop', 'setChatMenuButton', {
+                'menu_button': {'type': 'web_app', 'text': '🛒 Магазин',
+                                'web_app': {'url': public_url}}
+            })
+        else:
+            await telegram('shop', 'setChatMenuButton', {
+                'menu_button': {'type': 'commands'}
+            })
+    except Exception:
+        pass  # non-critical — bot still works without the menu button
+
+
 def _category_id(c, name):
     """Find a category by name, creating it when the supplier introduces a new one."""
     name = (name or '').strip()[:128]
@@ -317,7 +370,7 @@ def accept_payment(user, payment):
                 raise ValueError('duplicate_charge')
             return
         c.execute("UPDATE orders SET charge=?,state='paid' WHERE id=?", (payment['telegram_payment_charge_id'], o['id']))
-        say('shop', user, f"Оплата получена. Заказ {o['id'][:8]} передан в обработку. Статус доступен в «Мои заказы».", dedupe='paid:' + o['id'], conn=c)
+        say('shop', user, f"✅ Оплата получена! Заказ {o['id'][:8]} взят в работу 🔧\nСледи за статусом в «Мои заказы» 📦", dedupe='paid:' + o['id'], conn=c)
 
 def store_snapshot(oid, snapshot):
     content = '\n\n'.join(str(snapshot.get(k) or '') for k in ('status','delivery','instructions'))
@@ -347,7 +400,7 @@ async def process_order(o):
                 db.execute("UPDATE orders SET error='refund_needs_check',next_poll=? WHERE id=?", (time.time()+3600,o['id']))
                 return
             db.execute("UPDATE orders SET state='customer_refunded',error=NULL WHERE id=?", (o['id'],))
-            say('shop',o['user_id'],f"Stars за заказ {o['id'][:8]} возвращены.")
+            say('shop', o['user_id'], f"⭐ Stars за заказ {o['id'][:8]} возвращены. Приходи ещё!")
         elif not o['supplier_number']:
             body = unseal(o['body'])
             product_code = str(body.get('product_code', '')).split(':')[-1]
@@ -402,6 +455,7 @@ def request_refund(oid, actor):
 async def worker():
     while True:
         try:
+            await _refresh_rub_rate()
             if os.getenv('JAHA_API_KEY') or os.getenv('CANBOSO_API_KEY'):
                 sync_period = float(db.setting('sync_period', '900'))
                 if time.time()-float(db.setting('catalog_sync','0')) > sync_period:
