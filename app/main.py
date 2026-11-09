@@ -869,7 +869,7 @@ def _page(name, og_tags: dict | None = None):
     if not template_path.is_file():
         return FileResponse(template_path)
 
-    content = template_path.read_text()
+    content = template_path.read_text(encoding='utf-8')
 
     # Inject OG-tags before </head>
     if og_tags:

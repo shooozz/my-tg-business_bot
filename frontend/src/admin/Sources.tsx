@@ -33,55 +33,98 @@ export function Sources({ data, reload }: PageProps) {
     <div className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold">Поставщики</h1>
-          <p className="text-sm text-slate-500">Обновление {ago(Number(data.catalog_sync))}, автоматически каждые {Math.round(data.sync_period / 60)} мин.</p>
+          <h1 className="text-2xl font-bold" style={{ color: 'var(--c-text)' }}>Поставщики</h1>
+          <p className="text-sm" style={{ color: 'var(--c-muted)' }}>Обновление {ago(Number(data.catalog_sync))}, автоматически каждые {Math.round(data.sync_period / 60)} мин.</p>
         </div>
         <Button variant="primary" disabled={busy || !names.length} onClick={() => sync()}>{busy ? <Spinner /> : '↻'} Обновить всех</Button>
       </div>
-      {data.catalog_error && <p className="card border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">Последнее обновление с ошибкой: {data.catalog_error}</p>}
+
+      {data.catalog_error && (
+        <p className="card p-3 text-sm" style={{ borderColor: 'var(--c-bad)', background: 'color-mix(in srgb, var(--c-bad) 10%, var(--c-bg2))', color: 'var(--c-bad)' }}>
+          Последнее обновление с ошибкой: {data.catalog_error}
+        </p>
+      )}
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {names.length === 0 && <div className="card p-4 text-sm text-slate-500">Нет подключённых поставщиков. Добавьте JAHA_API_KEY или CANBOSO_API_KEY в .env на сервере.</div>}
+        {names.length === 0 && (
+          <div className="card p-4 text-sm" style={{ color: 'var(--c-muted)' }}>
+            Нет подключённых поставщиков. Добавьте JAHA_API_KEY или CANBOSO_API_KEY в .env на сервере.
+          </div>
+        )}
         {names.map(n => (
           <div key={n} className="card p-4">
-            <div className="flex items-center justify-between"><span className="font-semibold capitalize">{n}</span><Badge tone="good">подключён</Badge></div>
-            <div className="mt-2 text-2xl font-bold">{n in data.balances ? `${fmt(data.balances[n])} USDT` : '—'}</div>
-            <div className="text-xs text-slate-500">{offers.filter(o => o.provider === n).length} позиций</div>
+            <div className="flex items-center justify-between">
+              <span className="font-semibold capitalize" style={{ color: 'var(--c-text)' }}>{n}</span>
+              <Badge tone="good">подключён</Badge>
+            </div>
+            <div className="mt-2 text-2xl font-bold" style={{ color: 'var(--c-text)' }}>
+              {n in data.balances ? `${fmt(data.balances[n])} USDT` : '—'}
+            </div>
+            <div className="text-xs" style={{ color: 'var(--c-muted)' }}>{offers.filter(o => o.provider === n).length} позиций</div>
             <Button className="mt-3" disabled={busy} onClick={() => sync(n)}>Обновить только {n}</Button>
           </div>
         ))}
       </div>
 
-      <div className="card p-4 text-sm text-slate-600">
+      <div className="card p-4 text-sm" style={{ color: 'var(--c-muted)' }}>
         Одинаковые позиции разных поставщиков объединяются в один товар по названию. Покупатель видит цену самого дешёвого поставщика, у которого товар есть в наличии.
         Если объединилось неверно, нажмите «Перепривязать».
       </div>
 
       <div className="card overflow-x-auto">
-        <div className="flex flex-wrap gap-2 border-b border-slate-100 p-3">
+        <div className="flex flex-wrap gap-2 p-3" style={{ borderBottom: '1px solid var(--c-border)' }}>
           <input className="input max-w-xs" placeholder="Поиск" value={q} onChange={e => setQ(e.target.value)} aria-label="Поиск" />
           <select className="input w-auto" value={filter} onChange={e => setFilter(e.target.value)} aria-label="Фильтр">
-            <option value="all">Все позиции</option><option value="dup">Есть у нескольких поставщиков</option><option value="out">Нет в наличии</option>
+            <option value="all">Все позиции</option>
+            <option value="dup">Есть у нескольких поставщиков</option>
+            <option value="out">Нет в наличии</option>
             {names.map(n => <option key={n} value={n}>Только {n}</option>)}
           </select>
         </div>
         {rows.length === 0 ? <Empty title="Нет позиций" text="Запустите обновление." /> : (
           <table className="w-full text-sm">
-            <thead className="bg-slate-50"><tr><th className="th">Позиция поставщика</th><th className="th">Поставщик</th><th className="th">Закупка</th><th className="th">Наличие</th><th className="th">Товар в магазине</th><th className="th" /></tr></thead>
-            <tbody>{rows.slice(0, 300).map(o => {
-              const p = o.product_id ? byProduct.get(o.product_id) : undefined
-              return (
-                <tr key={o.id} className="border-t border-slate-100">
-                  <td className="td">{o.name}<div className="text-xs text-slate-400">{o.provider_product_id}</div></td>
-                  <td className="td"><Badge>{o.provider}</Badge></td>
-                  <td className="td whitespace-nowrap">{fmt(o.price_usdt)} USDT</td>
-                  <td className="td">{o.in_stock && o.available ? stockText(o.available) : <span className="text-rose-600">нет</span>}</td>
-                  <td className="td">{p ? <>{p.data.title} {p.best_offering_id === o.id
-                    ? <Badge tone="good">цена отсюда</Badge> : (perProduct.get(p.id) ?? 0) > 1 && <Badge>дороже / нет</Badge>}</> : <span className="text-slate-400">ещё не создан</span>}</td>
-                  <td className="td text-right"><Button variant="ghost" onClick={() => setLinking(o)}>Перепривязать</Button></td>
-                </tr>
-              )
-            })}</tbody>
+            <thead style={{ background: 'var(--c-bg3)' }}>
+              <tr>
+                <th className="th">Позиция поставщика</th>
+                <th className="th">Поставщик</th>
+                <th className="th">Закупка</th>
+                <th className="th">Наличие</th>
+                <th className="th">Товар в магазине</th>
+                <th className="th" />
+              </tr>
+            </thead>
+            <tbody>
+              {rows.slice(0, 300).map(o => {
+                const p = o.product_id ? byProduct.get(o.product_id) : undefined
+                return (
+                  <tr key={o.id} className="transition" style={{ borderTop: '1px solid var(--c-border)' }}
+                    onMouseEnter={e => (e.currentTarget.style.background = 'var(--c-bg3)')}
+                    onMouseLeave={e => (e.currentTarget.style.background = '')}>
+                    <td className="td">
+                      <span style={{ color: 'var(--c-text)' }}>{o.name}</span>
+                      <div className="text-xs" style={{ color: 'var(--c-muted)' }}>{o.provider_product_id}</div>
+                    </td>
+                    <td className="td"><Badge>{o.provider}</Badge></td>
+                    <td className="td whitespace-nowrap" style={{ color: 'var(--c-text)' }}>{fmt(o.price_usdt)} USDT</td>
+                    <td className="td">
+                      {o.in_stock && o.available
+                        ? <span style={{ color: 'var(--c-good)' }}>{stockText(o.available)}</span>
+                        : <span style={{ color: 'var(--c-bad)' }}>нет</span>}
+                    </td>
+                    <td className="td">
+                      {p
+                        ? <>{p.data.title} {p.best_offering_id === o.id
+                          ? <Badge tone="good">цена отсюда</Badge>
+                          : (perProduct.get(p.id) ?? 0) > 1 && <Badge>дороже / нет</Badge>}</>
+                        : <span style={{ color: 'var(--c-muted)' }}>ещё не создан</span>}
+                    </td>
+                    <td className="td text-right">
+                      <Button variant="ghost" onClick={() => setLinking(o)}>Перепривязать</Button>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
           </table>
         )}
       </div>
@@ -103,12 +146,15 @@ function LinkModal({ o, data, onClose, onDone }: { o: Offering; data: PageProps[
       <div className="max-h-80 space-y-1 overflow-y-auto">
         {list.map(p => (
           <button key={p.id} disabled={busy || p.id === o.product_id} onClick={() => link(p.id)}
-            className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-100 disabled:opacity-50">
-            <span>{p.data.title} <span className="text-xs text-slate-400">#{p.id}</span></span>
-            {p.id === o.product_id ? <Badge tone="info">сейчас</Badge> : <span className="text-xs text-slate-500">{fmt(p.stars)} ★</span>}
+            className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm transition disabled:opacity-50"
+            style={{ color: 'var(--c-text)' }}
+            onMouseEnter={e => { if (!e.currentTarget.disabled) e.currentTarget.style.background = 'var(--c-bg3)' }}
+            onMouseLeave={e => (e.currentTarget.style.background = '')}>
+            <span>{p.data.title} <span className="text-xs" style={{ color: 'var(--c-muted)' }}>#{p.id}</span></span>
+            {p.id === o.product_id ? <Badge tone="info">сейчас</Badge> : <span className="text-xs" style={{ color: 'var(--c-muted)' }}>{fmt(p.stars)} ★</span>}
           </button>
         ))}
-        {!list.length && <p className="py-6 text-center text-sm text-slate-500">Ничего не найдено</p>}
+        {!list.length && <p className="py-6 text-center text-sm" style={{ color: 'var(--c-muted)' }}>Ничего не найдено</p>}
       </div>
     </Modal>
   )

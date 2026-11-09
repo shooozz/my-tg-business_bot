@@ -31,20 +31,20 @@ export function Categories({ data, reload }: PageProps) {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-2xl font-bold">Категории</h1>
-        <p className="text-sm text-slate-500">Новые категории поставщиков появляются здесь сами. У каждой можно задать свою наценку, заморозить автообновление или разом показать и скрыть все товары.</p>
+        <h1 className="text-2xl font-bold" style={{ color: 'var(--c-text)' }}>Категории</h1>
+        <p className="text-sm" style={{ color: 'var(--c-muted)' }}>Новые категории поставщиков появляются здесь сами. У каждой можно задать свою наценку, заморозить автообновление или разом показать и скрыть все товары.</p>
       </div>
       <form className="card flex gap-2 p-3" onSubmit={e => { e.preventDefault(); if (name.trim()) create() }}>
         <input className="input" placeholder="Новая категория" value={name} maxLength={128} onChange={e => setName(e.target.value)} aria-label="Название категории" />
         <Button variant="primary" disabled={busy || !name.trim()}>Добавить</Button>
       </form>
-      <div className="card divide-y divide-slate-100">
+      <div className="card divide-y" style={{ borderColor: 'var(--c-border)' }}>
         {data.categories.length === 0 && <Empty title="Категорий пока нет" />}
         {tree(data.categories).map(([c, depth]) => (
           <CategoryRow key={`${c.id}:${c.name}:${c.markup_percent}:${c.sort_order}:${c.parent_id}`}
             c={c} depth={depth} ids={count(c.id).map(p => p.id)} all={data.categories} globalMarkup={data.markup_percent} reload={reload} />
         ))}
-        {count(null).length > 0 && <div className="px-4 py-3 text-sm text-slate-500">Без категории: {count(null).length} товаров</div>}
+        {count(null).length > 0 && <div className="px-4 py-3 text-sm" style={{ color: 'var(--c-muted)' }}>Без категории: {count(null).length} товаров</div>}
       </div>
     </div>
   )
@@ -81,21 +81,22 @@ function CategoryRow({ c, depth, ids, all, globalMarkup, reload }: {
 
   return (
     <div className="flex flex-wrap items-center gap-2 px-4 py-3" style={{ paddingLeft: 16 + depth * 24 }}>
-      {depth > 0 && <span className="text-slate-300">└</span>}
+      {depth > 0 && <span style={{ color: 'var(--c-border)' }}>└</span>}
       <input className="input w-48 py-1.5" value={name} onChange={e => setName(e.target.value)} aria-label="Название" />
       <Badge>{ids.length} тов.</Badge>
-      <label className="flex items-center gap-1 text-xs text-slate-500">Наценка
+      <label className="flex items-center gap-1 text-xs" style={{ color: 'var(--c-muted)' }}>Наценка
         <input className="input w-20 py-1.5" value={markup} placeholder={`${globalMarkup}`} onChange={e => setMarkup(e.target.value)} aria-label="Наценка %" />%</label>
-      <label className="flex items-center gap-1 text-xs text-slate-500">Внутри
+      <label className="flex items-center gap-1 text-xs" style={{ color: 'var(--c-muted)' }}>Внутри
         <select className="input w-36 py-1.5" value={parent ?? ''} onChange={e => setParent(e.target.value ? Number(e.target.value) : null)}>
           <option value="">— верхний уровень</option>
           {all.filter(x => x.id !== c.id).map(x => <option key={x.id} value={x.id}>{x.name}</option>)}
         </select></label>
-      <label className="flex items-center gap-1 text-xs text-slate-500">Порядок
+      <label className="flex items-center gap-1 text-xs" style={{ color: 'var(--c-muted)' }}>Порядок
         <input className="input w-16 py-1.5" type="number" value={order} onChange={e => setOrder(e.target.value)} /></label>
       {dirty && <Button variant="primary" disabled={busy} onClick={() => put({}, 'Сохранено')}>Сохранить</Button>}
       <div className="ml-auto flex items-center gap-2">
-        <span className="flex items-center gap-2 text-xs text-slate-500" title="Выключите, чтобы поставщик не менял названия и цены в этой категории. Наличие обновляется всегда.">
+        <span className="flex items-center gap-2 text-xs" style={{ color: 'var(--c-muted)' }}
+          title="Выключите, чтобы поставщик не менял названия и цены в этой категории. Наличие обновляется всегда.">
           Автообновление <Toggle checked={!!c.auto_update} disabled={busy} onChange={v => put({ auto_update: v }, v ? 'Автообновление включено' : 'Категория заморожена')} label="Автообновление" />
         </span>
         {ids.length > 0 && <><Button disabled={busy} onClick={() => bulk(true)}>Показать все</Button>

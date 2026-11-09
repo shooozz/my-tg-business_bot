@@ -1,4 +1,5 @@
-import { useState, type ReactNode } from 'react'
+import { useState } from 'react'
+import React from 'react'
 import { api } from '../shared/api'
 import { autoStars, fmt } from '../shared/format'
 import type { Dashboard, Product } from '../shared/types'
@@ -6,18 +7,18 @@ import { Button, Modal, Spinner, Toggle, toast, useAction } from '../shared/ui'
 import { markupFor } from './common'
 
 function Field({ label, auto, onAuto, hint, children }:
-  { label: string; auto: boolean; onAuto: (v: boolean) => void; hint?: string; children: ReactNode }) {
+  { label: string; auto: boolean; onAuto: (v: boolean) => void; hint?: string; children: React.ReactNode }) {
   return (
     <div className="space-y-1.5">
       <div className="flex items-center justify-between gap-3">
-        <span className="text-sm font-medium">{label}</span>
-        <span className="flex items-center gap-2 text-xs text-slate-500">
+        <span className="text-sm font-medium" style={{ color: 'var(--c-text)' }}>{label}</span>
+        <span className="flex items-center gap-2 text-xs" style={{ color: 'var(--c-muted)' }}>
           {auto ? 'Автообновление' : 'Своё значение'}
           <Toggle checked={auto} onChange={onAuto} label={`Автообновление: ${label}`} />
         </span>
       </div>
       {children}
-      {hint && <p className="text-xs text-slate-500">{hint}</p>}
+      {hint && <p className="text-xs" style={{ color: 'var(--c-muted)' }}>{hint}</p>}
     </div>
   )
 }
@@ -62,9 +63,10 @@ export function ProductEditor({ p, data, onClose, onSaved }:
       <Button variant="primary" onClick={submit} disabled={busy}>{busy && <Spinner />}Сохранить</Button>
     </>}>
       <div className="space-y-5">
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-slate-50 p-3 text-sm">
-          <span>Поставщик: <b>{p.provider}</b> · закупка {fmt(p.base_price_usdt)} USDT · {p.code}</span>
-          <span className="flex items-center gap-2">На витрине <Toggle checked={visible} onChange={setVisible} label="На витрине" /></span>
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl p-3 text-sm"
+          style={{ background: 'var(--c-bg3)' }}>
+          <span style={{ color: 'var(--c-text)' }}>Поставщик: <b>{p.provider}</b> · закупка {fmt(p.base_price_usdt)} USDT · {p.code}</span>
+          <span className="flex items-center gap-2" style={{ color: 'var(--c-muted)' }}>На витрине <Toggle checked={visible} onChange={setVisible} label="На витрине" /></span>
         </div>
         <Field label="Название" auto={auto.name} onAuto={flip('name')} hint={auto.name ? undefined : off}>
           <input className="input" value={name} disabled={auto.name} maxLength={256} onChange={e => setName(e.target.value)} />

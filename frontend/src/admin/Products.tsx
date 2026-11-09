@@ -57,9 +57,9 @@ export function Products({ data, reload }: PageProps) {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-2xl font-bold">Товары</h1>
-        <p className="text-sm text-slate-500">Цены считаются автоматически: закупка × наценка × курс. Изменённое вручную поле перестаёт обновляться от поставщика.</p>
+      <div className="space-y-1">
+        <h1 className="text-2xl font-bold" style={{ color: 'var(--c-text)' }}>Товары</h1>
+        <p className="text-sm" style={{ color: 'var(--c-muted)' }}>Цены считаются автоматически: закупка × наценка × курс. Изменённое вручную поле перестаёт обновляться от поставщика.</p>
       </div>
 
       <div className="card flex flex-wrap gap-2 p-3">
@@ -80,8 +80,9 @@ export function Products({ data, reload }: PageProps) {
       </div>
 
       {sel.size > 0 && (
-        <div className="card sticky top-28 z-20 flex flex-wrap items-center gap-2 border-indigo-200 bg-indigo-50 p-3 lg:top-2">
-          <span className="text-sm font-medium">Выбрано: {sel.size}</span>
+        <div className="card sticky top-0 z-20 flex flex-wrap items-center gap-2 p-3"
+          style={{ borderColor: 'var(--c-accent)', background: 'color-mix(in srgb, var(--c-accent) 8%, var(--c-bg2))' }}>
+          <span className="text-sm font-medium" style={{ color: 'var(--c-text)' }}>Выбрано: {sel.size}</span>
           <Button onClick={() => bulk({ visible: true }, 'Показаны товары с ценой')}>Показать</Button>
           <Button onClick={() => bulk({ visible: false }, 'Скрыто')}>Скрыть</Button>
           <select className="input w-auto" value="" aria-label="Переместить в категорию"
@@ -99,7 +100,7 @@ export function Products({ data, reload }: PageProps) {
             text={data.products.length ? 'Измените фильтры.' : 'Запустите синхронизацию на странице «Поставщики».'} />
         ) : (
           <table className="w-full text-sm">
-            <thead className="bg-slate-50"><tr>
+            <thead style={{ background: 'var(--c-bg3)' }}><tr>
               <th className="th"><input type="checkbox" checked={allShown} aria-label="Выбрать все"
                 onChange={e => setSel(e.target.checked ? new Set([...sel, ...shown.map(p => p.id)]) : new Set())} /></th>
               <th className="th">Товар</th><th className="th">Категория</th><th className="th">Закупка</th>
@@ -111,7 +112,7 @@ export function Products({ data, reload }: PageProps) {
             </tbody>
           </table>
         )}
-        {rows.length > limit && <div className="border-t border-slate-100 p-3 text-center">
+        {rows.length > limit && <div className="p-3 text-center" style={{ borderTop: '1px solid var(--c-border)' }}>
           <Button onClick={() => setLimit(l => l + PAGE)}>Показать ещё {Math.min(PAGE, rows.length - limit)}</Button></div>}
       </div>
       {editing && <ProductEditor p={editing} data={data} onClose={() => setEditing(null)} onSaved={reload} />}

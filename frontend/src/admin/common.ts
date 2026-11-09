@@ -1,6 +1,16 @@
 import type { Dashboard } from '../shared/types'
 
-export type Tab = 'overview' | 'products' | 'categories' | 'sources' | 'orders' | 'support' | 'settings'
+export type Tab =
+  | 'overview'
+  | 'products'
+  | 'services'
+  | 'collections'
+  | 'categories'
+  | 'sources'
+  | 'orders'
+  | 'support'
+  | 'bot-screens'
+  | 'settings'
 
 export interface PageProps {
   data: Dashboard
@@ -17,3 +27,18 @@ export const isFrozen = (d: Dashboard, categoryId: number | null) =>
   d.categories.find(c => c.id === categoryId)?.auto_update === 0
 
 export const stockText = (n: number) => (n >= 100 ? 'много' : String(n))
+
+// ── Themed CSS shorthand helpers ─────────────────────────────────────────────
+
+export const themed = {
+  text:   { color: 'var(--c-text)' },
+  muted:  { color: 'var(--c-muted)' },
+  accent: { color: 'var(--c-accent)' },
+  good:   { color: 'var(--c-good)' },
+  bad:    { color: 'var(--c-bad)' },
+  warn:   { color: 'var(--c-warn)' },
+  bg:     { background: 'var(--c-bg)' },
+  bg2:    { background: 'var(--c-bg2)' },
+  bg3:    { background: 'var(--c-bg3)' },
+  border: { borderColor: 'var(--c-border)' },
+} as const
