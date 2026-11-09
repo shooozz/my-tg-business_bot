@@ -1,46 +1,64 @@
 import { useEffect, useState, type ButtonHTMLAttributes, type ReactNode } from 'react'
-import { getTheme, toggleTheme, type Theme } from './theme'
+import { cycleTheme, getMode, getTheme, initTheme, type Theme, type ThemeMode } from './theme'
 
-/** Calls toggleTheme and returns current theme via a state. */
+const MODE_ICON: Record<ThemeMode, string> = { dark: '🌙', light: '☀️', system: '💻' }
+const MODE_LABEL: Record<ThemeMode, string> = {
+  dark:   'Тёмная тема — нажмите для светлой',
+  light:  'Светлая тема — нажмите для системной',
+  system: 'Системная тема — нажмите для тёмной',
+}
+
+/** Cycles dark → light → system → dark on each click. */
 export function ThemeToggle() {
-  const [theme, setTheme] = useState<Theme>(() => getTheme())
+  const [mode, setMode] = useState<ThemeMode>(() => getMode())
+  const [_theme, setTheme] = useState<Theme>(() => getTheme())
+  void _theme // used to trigger re-render when applied theme changes
+
+  function handleClick() {
+    const next = cycleTheme()
+    setMode(next)
+    // getTheme() returns the *applied* theme after setMode
+    setTheme(getTheme())
+  }
+
   return (
     <button
-      onClick={() => setTheme(toggleTheme())}
-      aria-label="Переключить тему"
-      title={theme === 'dark' ? 'Переключить на светлую тему' : 'Переключить на тёмную тему'}
-      className="rounded-lg px-2 py-1.5 text-sm transition hover:opacity-80"
+      onClick={handleClick}
+      aria-label={MODE_LABEL[mode]}
+      title={MODE_LABEL[mode]}
+      className="rounded-lg px-2 py-1.5 text-sm transition-colors hover:opacity-80"
       style={{ color: 'var(--c-muted)', background: 'var(--c-bg3)' }}
     >
-      {theme === 'dark' ? '☀️' : '🌙'}
+      {MODE_ICON[mode]}
     </button>
   )
 }
 
+// Export initTheme so main.tsx can call it.
+export { initTheme }
+
 type Variant = 'primary' | 'secondary' | 'ghost' | 'danger'
-const VARIANTS: Record<Variant, string> = {
-  primary: 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm',
-  secondary: 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-50',
-  ghost: 'text-slate-600 hover:bg-slate-100',
-  danger: 'bg-white text-rose-600 border border-rose-200 hover:bg-rose-50',
-}
 
 export function Button({ variant = 'secondary', className = '', ...rest }:
   ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant }) {
-  return <button {...rest} className={`inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${VARIANTS[variant]} ${className}`} />
+  const base = 'inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50'
+  const variantClass =
+    variant === 'primary'   ? 'bg-[var(--c-accent)] text-white hover:bg-[var(--c-acc-hov)] shadow-sm'
+    : variant === 'ghost'   ? 'btn-ghost'
+    : variant === 'danger'  ? 'btn-danger'
+    : /* secondary */         'btn-secondary'
+  return <button {...rest} className={`${base} ${variantClass} ${className}`} />
 }
 
-const TONES = {
-  good: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
-  bad: 'bg-rose-50 text-rose-700 ring-rose-200',
-  warn: 'bg-amber-50 text-amber-700 ring-amber-200',
-  info: 'bg-indigo-50 text-indigo-700 ring-indigo-200',
-  muted: 'bg-slate-100 text-slate-600 ring-slate-200',
-}
-export type Tone = keyof typeof TONES
+export type Tone = 'good' | 'bad' | 'warn' | 'info' | 'muted'
 
 export function Badge({ tone = 'muted', children, title }: { tone?: Tone; children: ReactNode; title?: string }) {
-  return <span title={title} className={`inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${TONES[tone]}`}>{children}</span>
+  return (
+    <span title={title}
+      className={`inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium badge-${tone}`}>
+      {children}
+    </span>
+  )
 }
 
 export function Toggle({ checked, onChange, disabled, label }:
@@ -48,7 +66,8 @@ export function Toggle({ checked, onChange, disabled, label }:
   return (
     <button type="button" role="switch" aria-checked={checked} aria-label={label} disabled={disabled}
       onClick={() => onChange(!checked)}
-      className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition disabled:opacity-50 ${checked ? 'bg-indigo-600' : 'bg-slate-300'}`}>
+      className="relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition disabled:opacity-50"
+      style={{ background: checked ? 'var(--c-accent)' : 'var(--c-bg3)' }}>
       <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition ${checked ? 'translate-x-4.5' : 'translate-x-0.5'}`} />
     </button>
   )
@@ -57,8 +76,8 @@ export function Toggle({ checked, onChange, disabled, label }:
 export function Empty({ title, text, children }: { title: string; text?: string; children?: ReactNode }) {
   return (
     <div className="flex flex-col items-center gap-2 px-6 py-12 text-center">
-      <div className="text-base font-semibold text-slate-800">{title}</div>
-      {text && <p className="max-w-md text-sm text-slate-500">{text}</p>}
+      <div className="text-base font-semibold" style={{ color: 'var(--c-text)' }}>{title}</div>
+      {text && <p className="max-w-md text-sm" style={{ color: 'var(--c-muted)' }}>{text}</p>}
       {children}
     </div>
   )
@@ -76,15 +95,20 @@ export function Modal({ title, onClose, children, footer, wide }:
     return () => window.removeEventListener('keydown', key)
   }, [onClose])
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 p-0 backdrop-blur-sm sm:items-center sm:p-4" onMouseDown={onClose}>
+    <div className="fixed inset-0 z-50 flex items-end justify-center p-0 sm:items-center sm:p-4 modal-overlay"
+      onMouseDown={onClose}>
       <div onMouseDown={e => e.stopPropagation()}
-        className={`flex max-h-[92vh] w-full flex-col rounded-t-2xl bg-white shadow-xl sm:rounded-2xl ${wide ? 'sm:max-w-3xl' : 'sm:max-w-lg'}`}>
-        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
-          <h3 className="text-base font-semibold">{title}</h3>
-          <button onClick={onClose} aria-label="Закрыть" className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700">✕</button>
+        className={`flex max-h-[92vh] w-full flex-col rounded-t-2xl shadow-xl sm:rounded-2xl modal-body ${wide ? 'sm:max-w-3xl' : 'sm:max-w-lg'}`}>
+        <div className="flex items-center justify-between px-5 py-4 modal-header">
+          <h3 className="text-base font-semibold" style={{ color: 'var(--c-text)' }}>{title}</h3>
+          <button onClick={onClose} aria-label="Закрыть"
+            className="rounded-lg p-1 transition hover:opacity-80"
+            style={{ color: 'var(--c-muted)', '--hover-bg': 'var(--c-bg3)' } as React.CSSProperties}
+            onMouseEnter={e => (e.currentTarget.style.background = 'var(--c-bg3)')}
+            onMouseLeave={e => (e.currentTarget.style.background = '')}>✕</button>
         </div>
         <div className="overflow-y-auto px-5 py-4">{children}</div>
-        {footer && <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-3">{footer}</div>}
+        {footer && <div className="flex justify-end gap-2 px-5 py-3 modal-footer">{footer}</div>}
       </div>
     </div>
   )
@@ -109,7 +133,11 @@ export function Toaster() {
   return (
     <div className="pointer-events-none fixed bottom-4 left-1/2 z-[60] flex w-full max-w-sm -translate-x-1/2 flex-col gap-2 px-4" role="status">
       {items.map(t => (
-        <div key={t.id} className={`rounded-xl px-4 py-3 text-sm text-white shadow-lg ${t.bad ? 'bg-rose-600' : 'bg-slate-900'}`}>{t.text}</div>
+        <div key={t.id}
+          className="rounded-xl px-4 py-3 text-sm text-white shadow-lg"
+          style={{ background: t.bad ? 'var(--c-bad)' : 'var(--c-bg3)', color: t.bad ? '#fff' : 'var(--c-text)' }}>
+          {t.text}
+        </div>
       ))}
     </div>
   )

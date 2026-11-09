@@ -3,10 +3,27 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark light">
   <title>Магазин цифровых товаров</title>
   <meta name="description" content="Цифровые товары с мгновенной выдачей. Оплата Telegram Stars.">
+  <!--
+    Apply theme before first paint to prevent FOUC.
+    Reads localStorage 'theme' (dark | light | system).
+    Falls back to system preference, then dark.
+  -->
+  <script>
+    ;(function(){
+      try {
+        var s = localStorage.getItem('theme');
+        var t = s === 'light' ? 'light'
+              : s === 'dark'  ? 'dark'
+              : window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+        document.documentElement.dataset.theme = t;
+      } catch(e) {}
+    })();
+  </script>
 </head>
-<body class="bg-slate-50">
+<body>
   <div id="root"></div>
   <script type="module" src="/src/store/main.tsx"></script>
 </body>

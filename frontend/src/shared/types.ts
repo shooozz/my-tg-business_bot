@@ -99,6 +99,7 @@ export interface Offering {
 
 export interface PublicProduct {
   id: number
+  code?: string
   name: string
   description: string
   stars: number
@@ -111,4 +112,26 @@ export interface PublicProduct {
   available: number
 }
 
-export interface PublicCategory { id: number; name: string; product_count: number }
+export interface PublicCategory { id: number; name: string; product_count: number; emoji?: string; description?: string }
+
+export interface PublicService {
+  id: number
+  name: string
+  slug: string
+  description: string
+  image: string
+  emoji: string
+  sort_order: number
+  product_count: number
+}
+
+export interface PublicCollection {
+  id: number
+  name: string
+  slug: string
+  description: string
+  image: string
+  collection_type: string
+  limit_count: number
+  sort_order: number
+}

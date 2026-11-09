@@ -13,9 +13,9 @@ export function Cover({ p, className = '' }: { p: { name: string; image: string;
   const line2 = (words[2] ?? p.description?.split(/\s+/)[0] ?? '').slice(0, 18)
   return (
     <div className={`flex flex-col items-center justify-center gap-1 px-3 text-center ${className}`}
-      style={{ background: `linear-gradient(135deg, hsl(${hue} 60% 32%), hsl(${(hue + 40) % 360} 60% 24%))` }}>
+      style={{ background: `linear-gradient(135deg, hsl(${hue} 50% 28%), hsl(${(hue + 40) % 360} 50% 20%))` }}>
       <span className="text-sm font-bold leading-tight text-white drop-shadow">{line1}</span>
-      {line2 && <span className="text-xs leading-tight text-white/70">{line2}</span>}
+      {line2 && <span className="text-xs leading-tight" style={{ color: 'rgba(255,255,255,.75)' }}>{line2}</span>}
     </div>
   )
 }
@@ -23,18 +23,17 @@ export function Cover({ p, className = '' }: { p: { name: string; image: string;
 export function ProductCard({ p, category, onOpen }: { p: PublicProduct; category?: string; onOpen: () => void }) {
   const auto = p.delivery_type === 'automatic'
   return (
-    <button onClick={onOpen}
-      className="group flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white text-left shadow-sm transition hover:-translate-y-0.5 hover:border-indigo-200 hover:shadow-md">
+    <button onClick={onOpen} className="group flex flex-col product-card text-left">
       <Cover p={p} className="aspect-[16/10] w-full" />
       <div className="flex flex-1 flex-col gap-2 p-4">
-        {category && <div className="text-xs font-medium text-indigo-600">{category}</div>}
-        <div className="line-clamp-2 font-semibold leading-snug text-slate-900">{p.name}</div>
+        {category && <div className="text-xs font-medium" style={{ color: 'var(--c-accent)' }}>{category}</div>}
+        <div className="line-clamp-2 font-semibold leading-snug" style={{ color: 'var(--c-text)' }}>{p.name}</div>
         <div className="mt-auto flex items-center justify-between pt-2">
           <div className="flex items-baseline gap-1.5">
-            <span className="text-lg font-bold text-slate-900">${p.price_usdt.toFixed(2)}</span>
-            <span className="text-sm text-slate-500">· {Math.round(p.price_rub)} ₽</span>
+            <span className="text-lg font-bold" style={{ color: 'var(--c-text)' }}>${p.price_usdt.toFixed(2)}</span>
+            <span className="text-sm" style={{ color: 'var(--c-muted)' }}>· {Math.round(p.price_rub)} ₽</span>
           </div>
-          <span className={`rounded-full px-2 py-0.5 text-xs ${auto ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
+          <span className={`badge-${auto ? 'good' : 'muted'} rounded-full px-2 py-0.5 text-xs`}>
             {auto ? '⚡ Мгновенно' : 'Ручная выдача'}
           </span>
         </div>

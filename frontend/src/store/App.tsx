@@ -1,108 +1,312 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, errText } from '../shared/api'
 import type { PublicCategory, PublicProduct } from '../shared/types'
-import { Spinner, ThemeToggle } from '../shared/ui'
+import { Spinner, ThemeToggle, Toaster } from '../shared/ui'
 import { ProductCard } from './ProductCard'
 import { ProductView } from './ProductView'
+import { ServiceView } from './ServiceView'
+import {
+  AutoDeliverySection,
+  CategoryTasks,
+  Hero,
+  HowItWorks,
+  PopularServices,
+  ProductsSection,
+  SupportStrip,
+} from './Home'
 
 type Shop = { username: string; shop_name: string }
 type Page = { products: PublicProduct[]; total: number; page: number }
+type RouteMatch = { type: 's' | 'p'; slug: string } | null
 
-// The open product lives in the URL hash (#/p/42) so links can be shared.
-const readHash = () => Number(location.hash.match(/^#\/p\/(\d+)/)?.[1]) || null
+// Parse URL path to determine current view
+const parseUrl = (): RouteMatch => {
+  const path = location.pathname
+  const match = path.match(/^\/([sp])\/(.+)$/)
+  if (match) {
+    return { type: match[1] as 's' | 'p', slug: match[2] }
+  }
+  return null
+}
 
-export function App() {
-  const [shop, setShop] = useState<Shop>({ username: '', shop_name: '' })
-  const [cats, setCats] = useState<PublicCategory[]>([])
-  const [cat, setCat] = useState<number | null>(null)
-  const [q, setQ] = useState('')
-  const [query, setQuery] = useState('')
+// ── Header ───────────────────────────────────────────────────────────────────
+
+function Header({ name, username, onHome, onCatalog }:
+  { name: string; username: string;
+    onHome: () => void; onCatalog: () => void }) {
+  return (
+    <header className="sticky top-0 z-30 header-bg">
+      <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-3">
+        <a href="/" onClick={e => { e.preventDefault(); onHome() }} className="flex items-center gap-2 font-bold">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600 text-white text-sm">
+            {name.charAt(0)}
+          </span>
+          <span className="hidden sm:inline font-bold" style={{ color: 'var(--c-text)' }}>{name}</span>
+        </a>
+
+        {/* Search — clicking it enters catalog mode */}
+        <button
+          onClick={onCatalog}
+          className="input ml-auto flex max-w-xs items-center gap-2 rounded-full px-4 text-left sm:max-w-md"
+          style={{ color: 'var(--c-muted)' }}>
+          <span className="text-base">🔍</span>
+          <span className="text-sm">Найти товар…</span>
+        </button>
+
+        <ThemeToggle />
+        {username && (
+          <a href={`https://t.me/${username}`} target="_blank" rel="noopener"
+            className="hidden shrink-0 rounded-full bg-[#229ED9] px-4 py-2 text-sm font-semibold text-white sm:block">
+            Открыть бота
+          </a>
+        )}
+      </div>
+    </header>
+  )
+}
+
+// ── Catalog header (search active) ───────────────────────────────────────────
+
+function CatalogHeader({ username, q, onQ, onBack }:
+  { username: string; q: string; onQ: (v: string) => void; onBack: () => void }) {
+  return (
+    <header className="sticky top-0 z-30 header-bg">
+      <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-3">
+        <button onClick={onBack} aria-label="На главную"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition"
+          style={{ background: 'var(--c-bg3)', color: 'var(--c-text)' }}>
+          ←
+        </button>
+        <input value={q} onChange={e => onQ(e.target.value)}
+          autoFocus
+          placeholder="Найти товар…" aria-label="Поиск"
+          className="input flex-1 rounded-full px-4" />
+        <ThemeToggle />
+        {username && (
+          <a href={`https://t.me/${username}`} target="_blank" rel="noopener"
+            className="hidden shrink-0 rounded-full bg-[#229ED9] px-4 py-2 text-sm font-semibold text-white sm:block">
+            Открыть бота
+          </a>
+        )}
+      </div>
+    </header>
+  )
+}
+
+// ── Catalog view (search/filter results) ─────────────────────────────────────
+
+function CatalogView({ cats, q, cat, onCat, onOpen, catName }:
+  { cats: PublicCategory[]; q: string;
+    cat: number | null; onCat: (id: number | null) => void;
+    onOpen: (slug: string) => void; catName: (id: number | null) => string | undefined }) {
   const [items, setItems] = useState<PublicProduct[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [open, setOpen] = useState(readHash)
   const req = useRef(0)
-
-  useEffect(() => {
-    api<Shop>('public/shop-bot').then(s => { setShop(s); if (s.shop_name) document.title = s.shop_name }).catch(() => {})
-    api<{ categories: PublicCategory[] }>('public/categories').then(r => setCats(r.categories)).catch(() => {})
-    const onHash = () => setOpen(readHash())
-    window.addEventListener('hashchange', onHash)
-    return () => window.removeEventListener('hashchange', onHash)
-  }, [])
-
-  useEffect(() => { const t = setTimeout(() => setQuery(q.trim()), 250); return () => clearTimeout(t) }, [q])
 
   async function load(p: number) {
     const mine = ++req.current
     setLoading(true); setError('')
     const params = new URLSearchParams({ page: String(p) })
     if (cat) params.set('category_id', String(cat))
-    if (query) params.set('q', query)
+    if (q.trim()) params.set('q', q.trim())
     try {
       const r = await api<Page>('public/products?' + params)
-      if (mine !== req.current) return // a newer search already started
-      setItems(xs => (p ? [...xs, ...r.products] : r.products)); setTotal(r.total); setPage(p)
+      if (mine !== req.current) return
+      setItems(xs => (p ? [...xs, ...r.products] : r.products))
+      setTotal(r.total); setPage(p)
     } catch (e) {
       if (mine === req.current) setError(errText(e))
     } finally {
       if (mine === req.current) setLoading(false)
     }
   }
-  useEffect(() => { load(0) }, [cat, query]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const catName = (id: number | null) => cats.find(c => c.id === id)?.name
-  const name = shop.shop_name || 'Магазин'
-  const chip = (active: boolean) => `whitespace-nowrap rounded-full px-4 py-2 text-sm font-medium transition ${active ? 'bg-slate-900 text-white' : 'bg-white text-slate-700 ring-1 ring-slate-200 hover:ring-slate-300'}`
+  useEffect(() => { load(0) }, [cat, q]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div className="min-h-screen">
-      <header className="sticky top-0 z-30 border-b border-slate-200/70 bg-white/80 backdrop-blur">
-        <div className="mx-auto flex max-w-6xl items-center gap-4 px-4 py-3">
-          <a href="#" onClick={() => { setCat(null); setQ('') }} className="flex items-center gap-2 font-bold">
-            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600 text-white">{name.charAt(0)}</span>
-            <span className="hidden sm:inline">{name}</span>
-          </a>
-          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Найти товар…" aria-label="Поиск"
-            className="input ml-auto max-w-md rounded-full px-4" />
-          <ThemeToggle />
-          {shop.username && <a href={`https://t.me/${shop.username}`} target="_blank" rel="noopener"
-            className="hidden rounded-full bg-[#229ED9] px-4 py-2 text-sm font-semibold text-white sm:block">Открыть бота</a>}
+    <main className="mx-auto max-w-6xl px-4 pb-16 pt-4">
+      {/* Category filter pills */}
+      {cats.length > 0 && (
+        <div className="mb-6 flex gap-2 overflow-x-auto pb-2">
+          <button onClick={() => onCat(null)}
+            className={`chip shrink-0 ${cat === null ? 'active' : ''}`}>
+            Все
+          </button>
+          {cats.map(c => (
+            <button key={c.id} onClick={() => onCat(c.id)}
+              className={`chip shrink-0 ${cat === c.id ? 'active' : ''}`}>
+              {c.emoji} {c.name}
+            </button>
+          ))}
         </div>
-      </header>
+      )}
 
-      <section className="mx-auto max-w-6xl px-4 pt-10 pb-6">
-        <h1 className="text-3xl font-extrabold tracking-tight sm:text-5xl">Цифровые товары<br /><span className="bg-gradient-to-r from-indigo-600 to-violet-600 bg-clip-text text-transparent">с мгновенной выдачей</span></h1>
-        <p className="mt-3 max-w-xl text-slate-600">Выберите товар, оплатите удобным способом и получите его в Telegram-боте. Поддержка отвечает там же.</p>
-        <div className="mt-5 flex flex-wrap gap-2 text-sm text-slate-600">
-          {['💳 Любые способы оплаты', '⚡ Автовыдача', '🔒 Данные шифруются', '💬 Живая поддержка'].map(t => <span key={t} className="rounded-full bg-white px-3 py-1 ring-1 ring-slate-200">{t}</span>)}
-        </div>
-      </section>
+      {error && <p className="py-10 text-center text-sm" style={{ color: 'var(--c-muted)' }}>{error}</p>}
+      {!error && !loading && items.length === 0 && (
+        <p className="py-16 text-center text-sm" style={{ color: 'var(--c-muted)' }}>
+          {q.trim() ? `По запросу «${q.trim()}» ничего не нашлось.` : 'Каталог скоро наполнится.'}
+        </p>
+      )}
 
-      <main className="mx-auto max-w-6xl px-4 pb-16">
-        {cats.length > 0 && (
-          <div className="-mx-4 mb-6 flex gap-2 overflow-x-auto px-4 pb-1">
-            <button className={chip(cat === null)} onClick={() => setCat(null)}>Все</button>
-            {cats.map(c => <button key={c.id} className={chip(cat === c.id)} onClick={() => setCat(c.id)}>{c.name} <span className="opacity-60">{c.product_count}</span></button>)}
-          </div>
-        )}
-        {error && <p className="py-10 text-center text-slate-500">{error}</p>}
-        {!error && !loading && items.length === 0 && (
-          <p className="py-16 text-center text-slate-500">{query ? `По запросу «${query}» ничего не нашлось.` : 'Каталог скоро наполнится. Загляните позже.'}</p>
-        )}
-        <div className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 lg:grid-cols-4">
-          {items.map(p => <ProductCard key={p.id} p={p} category={cat ? undefined : catName(p.category_id)} onOpen={() => { location.hash = `/p/${p.id}` }} />)}
-        </div>
-        <div className="mt-8 flex justify-center">
-          {loading ? <Spinner className="h-6 w-6 text-indigo-600" />
-            : items.length < total && <button onClick={() => load(page + 1)} className="rounded-full bg-white px-6 py-2.5 text-sm font-medium ring-1 ring-slate-200 hover:ring-slate-300">Показать ещё</button>}
-        </div>
-      </main>
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 lg:grid-cols-4">
+        {items.map(p => (
+          <ProductCard key={p.id} p={p}
+            category={cat ? undefined : catName(p.category_id)}
+            onOpen={() => onOpen(p.code || String(p.id))} />
+        ))}
+      </div>
 
-      <footer className="border-t border-slate-200 py-8 text-center text-sm text-slate-500">© {new Date().getFullYear()} {name}</footer>
-      {open && <ProductView id={open} bot={shop.username} category={catName} onClose={() => { location.hash = '' }} />}
+      <div className="mt-8 flex justify-center">
+        {loading
+          ? <Spinner className="h-6 w-6 text-[var(--c-accent)]" />
+          : items.length < total && (
+            <button onClick={() => load(page + 1)} className="chip">Показать ещё</button>
+          )}
+      </div>
+    </main>
+  )
+}
+
+// ── Main App ──────────────────────────────────────────────────────────────────
+
+export function App() {
+  const [shop, setShop] = useState<Shop>({ username: '', shop_name: '' })
+  const [cats, setCats] = useState<PublicCategory[]>([])
+  const [view, setView] = useState<'home' | 'catalog'>('home')
+  const [route, setRoute] = useState<RouteMatch>(null)
+  const [q, setQ] = useState('')
+  const [cat, setCat] = useState<number | null>(null)
+
+  // Products per home section
+  const [popular, setPopular] = useState<PublicProduct[]>([])
+  const [newest, setNewest] = useState<PublicProduct[]>([])
+  const [autoDelivery, setAutoDelivery] = useState<PublicProduct[]>([])
+  const [loadingHome, setLoadingHome] = useState(true)
+
+  // Load shop and categories
+  useEffect(() => {
+    api<Shop>('public/shop-bot').then(s => {
+      setShop(s)
+      if (s.shop_name) document.title = s.shop_name
+    }).catch(() => {})
+
+    api<{ categories: PublicCategory[] }>('public/categories')
+      .then(r => setCats(r.categories)).catch(() => {})
+
+    // Load home sections in parallel
+    Promise.all([
+      api<Page>('public/products?page=0').catch(() => ({ products: [], total: 0, page: 0 } as Page)),
+    ]).then(([all]) => {
+      const ps = all.products
+      setPopular(ps.slice(0, 4))
+      setNewest(ps.slice(0, 4))
+      setAutoDelivery(ps.filter(p => p.delivery_type === 'automatic').slice(0, 4))
+      setLoadingHome(false)
+    })
+  }, [])
+
+  // Listen for URL changes (back/forward navigation)
+  useEffect(() => {
+    const handlePopState = () => {
+      const parsed = parseUrl()
+      setRoute(parsed)
+      if (!parsed) setView('home')
+    }
+
+    handlePopState()
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [])
+
+  const catName = (id: number | null) => cats.find(c => c.id === id)?.name
+
+  function navigateTo(path: string) {
+    history.pushState(null, '', path)
+    const parsed = parseUrl()
+    setRoute(parsed)
+    if (!parsed) setView('home')
+  }
+
+  function openProduct(slug: string) {
+    navigateTo(`/p/${slug}`)
+  }
+
+  function enterCatalog(catId?: number | null, query?: string) {
+    if (catId !== undefined) setCat(catId)
+    if (query !== undefined) setQ(query)
+    setView('catalog')
+  }
+
+  function goHome() {
+    navigateTo('/')
+    setView('home')
+    setCat(null)
+    setQ('')
+  }
+
+  const name = shop.shop_name || 'Магазин'
+
+  return (
+    <div className="min-h-screen" style={{ background: 'var(--c-bg)' }}>
+      {!route && view === 'home' ? (
+        <Header name={name} username={shop.username}
+          onHome={goHome} onCatalog={() => setView('catalog')} />
+      ) : !route ? (
+        <CatalogHeader username={shop.username} q={q} onQ={setQ} onBack={goHome} />
+      ) : (
+        <Header name={name} username={shop.username}
+          onHome={goHome} onCatalog={() => setView('catalog')} />
+      )}
+
+      {!route && view === 'home' && (
+        <>
+          <Hero onCatalog={() => setView('catalog')} />
+
+          <PopularServices cats={cats} onSelect={id => enterCatalog(id)} />
+
+          <ProductsSection title="Популярное" emoji="🔥"
+            items={popular} loading={loadingHome} catName={catName}
+            onOpen={openProduct} onSeeAll={() => enterCatalog(null)} />
+
+          <ProductsSection title="Новинки" emoji="✨"
+            items={newest} loading={loadingHome} catName={catName}
+            onOpen={openProduct} onSeeAll={() => enterCatalog(null)} />
+
+          <AutoDeliverySection
+            items={autoDelivery} loading={loadingHome} catName={catName}
+            onOpen={openProduct} onSeeAll={() => enterCatalog(null)} />
+
+          <CategoryTasks cats={cats} onSelect={(id, q) => enterCatalog(id, q)} />
+
+          <HowItWorks />
+
+          <SupportStrip botUsername={shop.username} />
+
+          <footer className="py-6 text-center text-sm" style={{ color: 'var(--c-muted)' }}>
+            © {new Date().getFullYear()} {name}
+          </footer>
+        </>
+      )}
+
+      {!route && view === 'catalog' && (
+        <CatalogView cats={cats} q={q} cat={cat} onCat={setCat}
+          onOpen={openProduct} catName={catName} />
+      )}
+
+      {route?.type === 'p' && (
+        <ProductView slug={route.slug} bot={shop.username} category={catName}
+          onClose={goHome} />
+      )}
+
+      {route?.type === 's' && (
+        <ServiceView slug={route.slug}
+          onClose={goHome} onOpenProduct={openProduct} />
+      )}
+
+      <Toaster />
     </div>
   )
 }

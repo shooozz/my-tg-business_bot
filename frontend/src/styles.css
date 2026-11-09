@@ -71,4 +71,134 @@
   .label { @apply mb-1 block text-xs font-medium; color: var(--c-muted); }
   .th    { @apply px-3 py-2 text-left text-xs font-medium uppercase tracking-wide; color: var(--c-muted); }
   .td    { @apply px-3 py-2 align-middle; }
+
+  /* ── Themed badges (tone-aware for dark & light) ─────────────────────────── */
+  .badge-good  {
+    background: color-mix(in srgb, var(--c-good) 14%, var(--c-bg2));
+    color: var(--c-good);
+    ring: 1px solid color-mix(in srgb, var(--c-good) 30%, transparent);
+  }
+  .badge-bad   {
+    background: color-mix(in srgb, var(--c-bad) 14%, var(--c-bg2));
+    color: var(--c-bad);
+  }
+  .badge-warn  {
+    background: color-mix(in srgb, var(--c-warn) 14%, var(--c-bg2));
+    color: var(--c-warn);
+  }
+  .badge-info  {
+    background: color-mix(in srgb, var(--c-accent) 14%, var(--c-bg2));
+    color: var(--c-accent);
+  }
+  .badge-muted {
+    background: var(--c-bg3);
+    color: var(--c-muted);
+  }
+
+  /* ── Themed button variants ──────────────────────────────────────────────── */
+  .btn-secondary {
+    background: var(--c-bg2);
+    color: var(--c-text);
+    border: 1px solid var(--c-border);
+  }
+  .btn-secondary:hover { background: var(--c-bg3); }
+
+  .btn-ghost   { color: var(--c-muted); }
+  .btn-ghost:hover { background: var(--c-bg3); }
+
+  .btn-danger  {
+    background: var(--c-bg2);
+    color: var(--c-bad);
+    border: 1px solid var(--c-border);
+  }
+  .btn-danger:hover { background: color-mix(in srgb, var(--c-bad) 10%, var(--c-bg2)); }
+
+  /* ── Modal overlay ───────────────────────────────────────────────────────── */
+  .modal-overlay {
+    background: color-mix(in srgb, var(--c-bg) 55%, transparent);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+  }
+  .modal-body {
+    background: var(--c-bg2);
+    border: 1px solid var(--c-border);
+  }
+  .modal-header {
+    border-bottom: 1px solid var(--c-border);
+  }
+  .modal-footer {
+    border-top: 1px solid var(--c-border);
+  }
+
+  /* ── Sticky header ───────────────────────────────────────────────────────── */
+  .header-bg {
+    background: color-mix(in srgb, var(--c-bg2) 88%, transparent);
+    border-bottom: 1px solid var(--c-border);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+
+  /* ── Category / filter chips ─────────────────────────────────────────────── */
+  .chip {
+    @apply whitespace-nowrap rounded-full px-4 py-2 text-sm font-medium transition;
+    background: var(--c-bg2);
+    color: var(--c-muted);
+    border: 1px solid var(--c-border);
+  }
+  .chip:hover { background: var(--c-bg3); color: var(--c-text); }
+  .chip.chip-active {
+    background: var(--c-text);
+    color: var(--c-bg);
+    border-color: var(--c-text);
+  }
+
+  /* ── Product card ────────────────────────────────────────────────────────── */
+  .product-card {
+    background: var(--c-card-bg);
+    border: 1px solid var(--c-border);
+    box-shadow: var(--c-shadow);
+    @apply overflow-hidden rounded-2xl transition;
+  }
+  .product-card:hover {
+    border-color: var(--c-accent);
+    box-shadow: 0 4px 12px color-mix(in srgb, var(--c-accent) 15%, transparent);
+    transform: translateY(-2px);
+  }
+
+  /* ── Skeleton loading placeholder ───────────────────────────────────────── */
+  .skeleton {
+    background: linear-gradient(90deg,
+      var(--c-bg3) 25%,
+      color-mix(in srgb, var(--c-bg3) 60%, var(--c-bg2)) 50%,
+      var(--c-bg3) 75%
+    );
+    background-size: 200% 100%;
+    animation: skeleton-wave 1.4s ease infinite;
+  }
+  @keyframes skeleton-wave {
+    0%   { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+
+  /* ── Sticky button for mobile ──────────────────────────────────────────────── */
+  .sticky-btn-mobile {
+    @apply static;
+  }
+  @media (max-width: 640px) {
+    .modal-body {
+      /* Make room for sticky button by adding bottom padding */
+      padding-bottom: 5rem;
+    }
+    .sticky-btn-mobile {
+      @apply fixed bottom-4 left-4 right-4 z-40;
+      width: calc(100% - 2rem);
+    }
+  }
+
+  /* ── Respect reduced-motion preference ──────────────────────────────────── */
+  @media (prefers-reduced-motion: reduce) {
+    .skeleton { animation: none; background: var(--c-bg3); }
+    .product-card:hover { transform: none; }
+    *, *::before, *::after { transition-duration: .01ms !important; }
+  }
 }

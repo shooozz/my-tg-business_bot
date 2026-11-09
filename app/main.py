@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from . import db, core, bots
@@ -146,6 +146,8 @@ async def dashboard():
         'pay_rub_provider': db.setting('pay_rub_provider', 'okassa'),
         'offering_count': db.one('SELECT COUNT(*) n FROM provider_offerings')['n'],
         'unmatched_count': db.one('SELECT COUNT(*) n FROM provider_offerings WHERE product_id IS NULL')['n'],
+        'services_count': len(db.rows('SELECT id FROM services')),
+        'collections_count': len(db.rows('SELECT id FROM collections')),
     }
 
 
@@ -425,6 +427,183 @@ async def link_offering(oid: int, body: OfferingLink):
     return {'ok': True}
 
 
+# ── Services ──────────────────────────────────────────────────────────────────
+
+class ServiceCreate(BaseModel):
+    name: str
+    slug: str = ''
+    description: str = ''
+    image: str = ''
+    emoji: str = ''
+    sort_order: int = 0
+    visible: int = 1
+
+@app.get('/api/services')
+async def list_services():
+    svcs = db.rows('SELECT * FROM services ORDER BY sort_order,name')
+    for s in svcs:
+        cnt = db.one('SELECT COUNT(*) as n FROM products WHERE service_id=?', (s['id'],))
+        s['product_count'] = cnt['n'] if cnt else 0
+    return {'services': svcs}
+
+@app.post('/api/services')
+async def create_service(body: ServiceCreate):
+    slug = body.slug or re.sub(r'[^a-z0-9-]', '-', body.name.lower()).strip('-')
+    eid = db.execute('INSERT INTO services(name,slug,description,image,emoji,sort_order,visible) VALUES(?,?,?,?,?,?,?)',
+                  (body.name, slug, body.description, body.image, body.emoji, body.sort_order, body.visible))
+    return {'id': eid}
+
+@app.put('/api/services/{sid}')
+async def update_service(sid: int, body: ServiceCreate):
+    db.execute('UPDATE services SET name=?,description=?,image=?,emoji=?,sort_order=?,visible=? WHERE id=?',
+            (body.name, body.description, body.image, body.emoji, body.sort_order, body.visible, sid))
+    return {'ok': True}
+
+@app.delete('/api/services/{sid}')
+async def delete_service(sid: int):
+    db.execute('UPDATE products SET service_id=NULL WHERE service_id=?', (sid,))
+    db.execute('DELETE FROM services WHERE id=?', (sid,))
+    return {'ok': True}
+
+
+# ── Collections ───────────────────────────────────────────────────────────────
+
+class CollectionCreate(BaseModel):
+    name: str
+    slug: str = ''
+    description: str = ''
+    image: str = ''
+    collection_type: str = 'manual'
+    auto_rules: str = '{}'
+    auto_combinator: str = 'any'
+    sort_order: int = 0
+    visible: int = 1
+    visible_store: int = 1
+    visible_bot: int = 1
+    limit_count: int = 0
+
+@app.get('/api/collections')
+async def list_collections():
+    colls = db.rows('SELECT * FROM collections ORDER BY sort_order,name')
+    for c in colls:
+        cnt = db.one('SELECT COUNT(*) as n FROM collection_products WHERE collection_id=?', (c['id'],))
+        c['product_count'] = cnt['n'] if cnt else 0
+    return {'collections': colls}
+
+@app.post('/api/collections')
+async def create_collection(body: CollectionCreate):
+    slug = body.slug or re.sub(r'[^a-z0-9-]', '-', body.name.lower()).strip('-')
+    eid = db.execute('''INSERT INTO collections(name,slug,description,image,collection_type,auto_rules,
+                     auto_combinator,sort_order,visible,visible_store,visible_bot,limit_count)
+                     VALUES(?,?,?,?,?,?,?,?,?,?,?,?)''',
+                  (body.name, slug, body.description, body.image, body.collection_type,
+                   body.auto_rules, body.auto_combinator, body.sort_order, body.visible,
+                   body.visible_store, body.visible_bot, body.limit_count))
+    return {'id': eid}
+
+@app.put('/api/collections/{cid}')
+async def update_collection(cid: int, body: CollectionCreate):
+    db.execute('''UPDATE collections SET name=?,description=?,image=?,collection_type=?,auto_rules=?,
+               auto_combinator=?,sort_order=?,visible=?,visible_store=?,visible_bot=?,limit_count=?
+               WHERE id=?''',
+            (body.name, body.description, body.image, body.collection_type, body.auto_rules,
+             body.auto_combinator, body.sort_order, body.visible, body.visible_store,
+             body.visible_bot, body.limit_count, cid))
+    return {'ok': True}
+
+@app.delete('/api/collections/{cid}')
+async def delete_collection(cid: int):
+    db.execute('DELETE FROM collection_products WHERE collection_id=?', (cid,))
+    db.execute('DELETE FROM collections WHERE id=?', (cid,))
+    return {'ok': True}
+
+class CollectionProductsEdit(BaseModel):
+    product_ids: list[int]
+
+@app.put('/api/collections/{cid}/products')
+async def set_collection_products(cid: int, body: CollectionProductsEdit):
+    with db.connect() as c:
+        c.execute('DELETE FROM collection_products WHERE collection_id=?', (cid,))
+        for i, pid in enumerate(body.product_ids):
+            c.execute('INSERT OR IGNORE INTO collection_products(collection_id,product_id,position) VALUES(?,?,?)', (cid, pid, i))
+    return {'ok': True}
+
+
+# ── Bot Screens ───────────────────────────────────────────────────────────────
+
+class BotScreenDraft(BaseModel):
+    draft_data: str  # JSON string
+
+@app.get('/api/bot-screens')
+async def list_bot_screens():
+    screens = db.rows('SELECT id,screen_key,name,draft_data,published_data,published_at,sort_order,updated FROM bot_screens ORDER BY sort_order')
+    return {'screens': screens}
+
+@app.get('/api/bot-screens/{sid}')
+async def get_bot_screen(sid: int):
+    s = db.one('SELECT * FROM bot_screens WHERE id=?', (sid,))
+    if not s: raise HTTPException(404)
+    versions = db.rows('SELECT id,actor,created FROM bot_screen_versions WHERE screen_id=? ORDER BY created DESC LIMIT 10', (sid,))
+    return {**s, 'versions': versions}
+
+@app.put('/api/bot-screens/{sid}/draft')
+async def save_bot_screen_draft(sid: int, body: BotScreenDraft):
+    db.execute('UPDATE bot_screens SET draft_data=?,updated=? WHERE id=?', (body.draft_data, time.time(), sid))
+    return {'ok': True}
+
+@app.post('/api/bot-screens/{sid}/publish')
+async def publish_bot_screen(sid: int):
+    s = db.one('SELECT * FROM bot_screens WHERE id=?', (sid,))
+    if not s: raise HTTPException(404)
+    now = time.time()
+    db.execute('INSERT INTO bot_screen_versions(screen_id,data,actor) VALUES(?,?,?)',
+            (sid, s['published_data'] or '{}', 'admin'))
+    db.execute('UPDATE bot_screens SET published_data=?,published_at=?,updated=? WHERE id=?',
+            (s['draft_data'], now, now, sid))
+    return {'ok': True}
+
+@app.post('/api/bot-screens/{sid}/revert')
+async def revert_bot_screen(sid: int, version_id: int):
+    v = db.one('SELECT * FROM bot_screen_versions WHERE id=? AND screen_id=?', (version_id, sid))
+    if not v: raise HTTPException(404)
+    db.execute('UPDATE bot_screens SET draft_data=?,updated=? WHERE id=?', (v['data'], time.time(), sid))
+    return {'ok': True}
+
+
+# ── Product Features ──────────────────────────────────────────────────────────
+
+class FeatureSet(BaseModel):
+    features: list[dict]  # [{feature_key, feature_value}]
+
+@app.get('/api/products/{pid}/features')
+async def get_product_features(pid: int):
+    feats = db.rows('SELECT * FROM product_features WHERE product_id=?', (pid,))
+    return {'features': feats}
+
+@app.put('/api/products/{pid}/features')
+async def set_product_features(pid: int, body: FeatureSet):
+    with db.connect() as c:
+        c.execute('DELETE FROM product_features WHERE product_id=?', (pid,))
+        for f in body.features:
+            c.execute('INSERT OR IGNORE INTO product_features(product_id,feature_key,feature_value) VALUES(?,?,?)',
+                      (pid, f['feature_key'], f.get('feature_value', '')))
+    return {'ok': True}
+
+
+# ── Extra Categories ───────────────────────────────────────────────────────────
+
+class ExtraCatsEdit(BaseModel):
+    category_ids: list[int]
+
+@app.put('/api/products/{pid}/extra-categories')
+async def set_extra_categories(pid: int, body: ExtraCatsEdit):
+    with db.connect() as c:
+        c.execute('DELETE FROM product_extra_categories WHERE product_id=?', (pid,))
+        for cid in body.category_ids:
+            c.execute('INSERT OR IGNORE INTO product_extra_categories(product_id,category_id) VALUES(?,?)', (pid, cid))
+    return {'ok': True}
+
+
 # ── Public (no-auth) ──────────────────────────────────────────────────────────
 
 @app.get('/api/public/shop-bot')
@@ -477,36 +656,129 @@ async def public_products(category_id: int = None, page: int = 0, q: str = ''):
         if q_lower and q_lower not in d.get('title', '').lower() and q_lower not in d.get('description', '').lower():
             continue
         prices = core.price_display(p['base_price_usdt'] or 0)
+        features = [f['feature_key'] for f in db.rows('SELECT feature_key FROM product_features WHERE product_id=?', (p['id'],))]
         result.append({'id': p['id'], 'name': d.get('title', ''), 'description': d.get('description', ''),
                         'stars': p['stars'], 'category_id': p['category_id'],
                         'delivery_type': d.get('delivery_type', 'automatic'),
                         'image': d.get('image', ''), 'emoji': d.get('emoji', ''),
                         'available': d.get('available', 0),
-                        'price_usdt': prices['price_usdt'], 'price_rub': prices['price_rub']})
+                        'price_usdt': prices['price_usdt'], 'price_rub': prices['price_rub'],
+                        'service_id': p.get('service_id'),
+                        'features': features})
     start = page * 20
     return {'products': result[start:start+20], 'total': len(result), 'page': page}
 
-@app.get('/api/public/products/{pid}')
-async def public_product(pid: int):
-    row = db.one(
-        'SELECT p.*, o.delivery_type AS o_delivery, o.available AS o_avail, '
-        'o.min_quantity, o.max_quantity '
-        'FROM products p LEFT JOIN provider_offerings o ON p.best_offering_id=o.id '
-        'WHERE p.id=? AND p.visible=1 AND p.stars>0', (pid,)
-    )
+@app.get('/api/public/products/{product_id}')
+async def public_product(product_id: str):
+    """Fetch product by ID or code (slug)."""
+    # Try to parse as integer ID first
+    try:
+        pid = int(product_id)
+        row = db.one(
+            'SELECT p.*, o.delivery_type AS o_delivery, o.available AS o_avail, '
+            'o.min_quantity, o.max_quantity '
+            'FROM products p LEFT JOIN provider_offerings o ON p.best_offering_id=o.id '
+            'WHERE p.id=? AND p.visible=1 AND p.stars>0', (pid,)
+        )
+    except ValueError:
+        # Otherwise treat as code/slug
+        row = db.one(
+            'SELECT p.*, o.delivery_type AS o_delivery, o.available AS o_avail, '
+            'o.min_quantity, o.max_quantity '
+            'FROM products p LEFT JOIN provider_offerings o ON p.best_offering_id=o.id '
+            'WHERE p.code=? AND p.visible=1 AND p.stars>0', (product_id,)
+        )
+
     if not row:
         raise HTTPException(404, 'Товар не найден')
+
     d = json.loads(row['data'])
     prices = core.price_display(row['base_price_usdt'] or 0)
     return {
-        'id': row['id'], 'name': d.get('title', ''), 'description': d.get('description', ''),
-        'stars': row['stars'], 'category_id': row['category_id'],
+        'id': row['id'],
+        'code': row['code'],
+        'name': d.get('title', ''),
+        'description': d.get('description', ''),
+        'stars': row['stars'],
+        'category_id': row['category_id'],
         'delivery_type': row.get('o_delivery') or d.get('delivery_type', 'automatic'),
-        'image': d.get('image', ''), 'emoji': d.get('emoji', ''),
+        'image': d.get('image', ''),
+        'emoji': d.get('emoji', ''),
         'available': d.get('available', 0),
-        'min_quantity': row.get('min_quantity') or 1, 'max_quantity': row.get('max_quantity') or 1,
-        'price_usdt': prices['price_usdt'], 'price_rub': prices['price_rub'],
+        'min_quantity': row.get('min_quantity') or 1,
+        'max_quantity': row.get('max_quantity') or 1,
+        'price_usdt': prices['price_usdt'],
+        'price_rub': prices['price_rub'],
+        'conditions': row.get('conditions') or '',
+        'warranty': row.get('warranty') or '',
+        'instructions': row.get('instructions') or '',
+        'promo_field_label': row.get('promo_field_label') or '',
     }
+
+
+@app.get('/api/public/services/{service_slug}')
+async def public_service(service_slug: str):
+    """Fetch service details by slug."""
+    row = db.one(
+        'SELECT id, name, slug, description, image, emoji FROM services '
+        'WHERE slug=? AND visible=1',
+        (service_slug,)
+    )
+    if not row:
+        raise HTTPException(404, 'Сервис не найден')
+    return {
+        'id': row['id'],
+        'name': row['name'],
+        'slug': row['slug'],
+        'description': row['description'],
+        'image': row['image'],
+        'emoji': row['emoji'],
+    }
+
+
+@app.get('/api/public/services/{service_slug}/products')
+async def public_service_products(service_slug: str):
+    """Fetch products for a specific service."""
+    svc = db.one('SELECT id FROM services WHERE slug=? AND visible=1', (service_slug,))
+    if not svc:
+        raise HTTPException(404, 'Сервис не найден')
+
+    prods = db.rows(
+        'SELECT p.* FROM products p '
+        'WHERE p.service_id=? AND p.visible=1 AND p.stars>0 ORDER BY p.id',
+        (svc['id'],)
+    )
+
+    result = []
+    for p in prods:
+        d = json.loads(p['data'])
+        if not d.get('available'):
+            continue
+        prices = core.price_display(p['base_price_usdt'] or 0)
+        features = [f['feature_key'] for f in db.rows('SELECT feature_key FROM product_features WHERE product_id=?', (p['id'],))]
+        result.append({
+            'id': p['id'],
+            'code': p['code'],
+            'name': d.get('title', ''),
+            'description': d.get('description', ''),
+            'stars': p['stars'],
+            'category_id': p['category_id'],
+            'delivery_type': d.get('delivery_type', 'automatic'),
+            'image': d.get('image', ''),
+            'emoji': d.get('emoji', ''),
+            'available': d.get('available', 0),
+            'price_usdt': prices['price_usdt'],
+            'price_rub': prices['price_rub'],
+            'service_id': p.get('service_id'),
+            'features': features,
+            'min_quantity': p.get('min_quantity') or 1,
+            'max_quantity': p.get('max_quantity') or 1,
+            'variants': [],
+            'regions': [],
+            'delivery_terms': [],
+        })
+
+    return {'products': result}
 
 
 @app.get('/api/public/pay-methods')
@@ -519,6 +791,68 @@ async def public_pay_methods():
     }
 
 
+# Список сервисов
+@app.get('/api/public/services')
+async def pub_services():
+    svcs = db.rows('SELECT id,name,slug,image,emoji,description,sort_order FROM services WHERE visible=1 ORDER BY sort_order,name')
+    for s in svcs:
+        cnt = db.one('SELECT COUNT(*) as n FROM products WHERE service_id=? AND visible=1 AND json_extract(data,"$.available")>0', (s['id'],))
+        s['product_count'] = cnt['n'] if cnt else 0
+    return {'services': svcs}
+
+# Список подборок (заголовок + кол-во товаров, без самих товаров)
+@app.get('/api/public/collections')
+async def pub_collections():
+    now = __import__('time').time()
+    colls = db.rows('''SELECT id,name,slug,description,image,collection_type,limit_count,sort_order
+                    FROM collections WHERE visible=1 AND visible_store=1
+                    AND (schedule_start IS NULL OR schedule_start<=?)
+                    AND (schedule_end IS NULL OR schedule_end>=?)
+                    ORDER BY sort_order,name''', (now, now))
+    return {'collections': colls}
+
+# Товары в конкретной подборке
+@app.get('/api/public/collections/{slug}/products')
+async def pub_collection_products(slug: str, page: int = 0):
+    coll = db.one('SELECT * FROM collections WHERE slug=? AND visible=1', (slug,))
+    if not coll: raise HTTPException(404)
+    limit = 20
+    offset = page * limit
+    if coll['collection_type'] == 'manual':
+        ps = db.rows('''SELECT p.*, cp.position FROM products p
+                     JOIN collection_products cp ON cp.product_id=p.id
+                     WHERE cp.collection_id=? AND p.visible=1
+                     ORDER BY cp.position LIMIT ? OFFSET ?''', (coll['id'], limit, offset))
+    else:
+        ps = db.rows('''SELECT * FROM products WHERE visible=1
+                     AND json_extract(data,"$.available")>0
+                     ORDER BY id DESC LIMIT ? OFFSET ?''', (limit, offset))
+    markup = float(db.setting('markup_percent', '10'))
+    rub_rate = float(db.setting('rub_rate', '90'))
+    rate = float(db.setting('usdt_to_stars_rate', '50'))
+    result = []
+    for p in ps:
+        d = json.loads(p['data'])
+        base = p.get('base_price_usdt') or d.get('price_usdt', 0)
+        cat_m = db.one('SELECT markup_percent FROM categories WHERE id=?', (p.get('category_id'),))
+        m = cat_m['markup_percent'] if cat_m and cat_m['markup_percent'] is not None else markup
+        price_usdt = base * (1 + m / 100) if not p.get('price_locked') else (p.get('stars', 0) / rate if rate else base)
+        result.append({
+            'id': p['id'],
+            'name': d.get('title', ''),
+            'description': d.get('description', ''),
+            'image': d.get('image', ''),
+            'price_usdt': round(price_usdt, 4),
+            'price_rub': round(price_usdt * rub_rate, 0),
+            'stars': p.get('stars', 0),
+            'delivery_type': d.get('delivery_type', 'manual'),
+            'category_id': p.get('category_id'),
+            'service_id': p.get('service_id'),
+            'available': d.get('available', 0),
+        })
+    return {'products': result, 'total': len(result)}
+
+
 STATIC=Path(__file__).parent/'static'
 # React build output (frontend/ -> npm run build). Absent in a fresh checkout,
 # in which case the legacy vanilla admin keeps working at / and /admin.
@@ -527,9 +861,26 @@ app.mount('/static',StaticFiles(directory=STATIC),name='static')
 if (WEB/'assets').is_dir():
     app.mount('/assets',StaticFiles(directory=WEB/'assets'),name='assets')
 
-def _page(name):
-    built = WEB/name
-    return FileResponse(built if built.is_file() else STATIC/'index.html')
+def _page(name, og_tags: dict | None = None):
+    """Serve a page with optional OG-tag injection."""
+    built = WEB / name
+    template_path = built if built.is_file() else STATIC / 'index.html'
+
+    if not template_path.is_file():
+        return FileResponse(template_path)
+
+    content = template_path.read_text()
+
+    # Inject OG-tags before </head>
+    if og_tags:
+        og_html = '\n  '.join(
+            f'<meta property="{k}" content="{v}">'
+            for k, v in og_tags.items()
+        )
+        og_html = '  ' + og_html
+        content = content.replace('</head>', f'{og_html}\n</head>')
+
+    return HTMLResponse(content)
 
 @app.get('/')
 async def index():
@@ -538,3 +889,49 @@ async def index():
 @app.get('/admin')
 async def admin_index():
     return _page('admin.html')
+
+@app.get('/p/{product_slug}')
+async def product_page(product_slug: str):
+    """Serve product page with OG-tags."""
+    try:
+        pid = int(product_slug)
+        row = db.one('SELECT p.*, o.id as o_id FROM products p LEFT JOIN provider_offerings o ON p.best_offering_id=o.id WHERE p.id=? AND p.visible=1', (pid,))
+    except ValueError:
+        row = db.one('SELECT p.*, o.id as o_id FROM products p LEFT JOIN provider_offerings o ON p.best_offering_id=o.id WHERE p.code=? AND p.visible=1', (product_slug,))
+
+    if not row:
+        return await index()  # Fallback to home page
+
+    d = json.loads(row['data'])
+    prices = core.price_display(row['base_price_usdt'] or 0)
+
+    og_tags = {
+        'og:title': d.get('title', 'Товар'),
+        'og:description': d.get('description', '')[:160],
+        'og:image': d.get('image', ''),
+        'og:type': 'product',
+        'og:url': f"{request.base_url.rstrip('/')}/p/{product_slug}",
+    }
+
+    return _page('store.html', og_tags)
+
+@app.get('/s/{service_slug}')
+async def service_page(service_slug: str):
+    """Serve service page with OG-tags."""
+    row = db.one(
+        'SELECT id, name, slug, description, image, emoji FROM services WHERE slug=? AND visible=1',
+        (service_slug,)
+    )
+
+    if not row:
+        return await index()  # Fallback to home page
+
+    og_tags = {
+        'og:title': row['name'],
+        'og:description': row['description'][:160] if row['description'] else 'Сервис',
+        'og:image': row['image'] if row['image'] else '',
+        'og:type': 'product',
+        'og:url': f"{request.base_url.rstrip('/')}/s/{service_slug}",
+    }
+
+    return _page('store.html', og_tags)

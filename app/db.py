@@ -82,6 +82,87 @@ def init():
             fetched_at REAL NOT NULL DEFAULT 0,
             UNIQUE(provider, provider_product_id)
         );
+        CREATE TABLE IF NOT EXISTS services (
+            id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            slug TEXT UNIQUE NOT NULL,
+            description TEXT DEFAULT '',
+            image TEXT DEFAULT '',
+            emoji TEXT DEFAULT '',
+            sort_order INTEGER DEFAULT 0,
+            visible INTEGER DEFAULT 1,
+            created REAL DEFAULT (unixepoch())
+        );
+        CREATE TABLE IF NOT EXISTS collections (
+            id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            slug TEXT UNIQUE NOT NULL,
+            description TEXT DEFAULT '',
+            image TEXT DEFAULT '',
+            collection_type TEXT DEFAULT 'manual',
+            auto_rules TEXT DEFAULT '{}',
+            auto_combinator TEXT DEFAULT 'any',
+            sort_override TEXT DEFAULT '{}',
+            sort_order INTEGER DEFAULT 0,
+            visible_store INTEGER DEFAULT 1,
+            visible_bot INTEGER DEFAULT 1,
+            schedule_start REAL,
+            schedule_end REAL,
+            pinned_product_ids TEXT DEFAULT '[]',
+            excluded_product_ids TEXT DEFAULT '[]',
+            limit_count INTEGER DEFAULT 0,
+            visible INTEGER DEFAULT 1,
+            created REAL DEFAULT (unixepoch())
+        );
+        CREATE TABLE IF NOT EXISTS collection_products (
+            collection_id INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+            product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+            position INTEGER DEFAULT 0,
+            PRIMARY KEY (collection_id, product_id)
+        );
+        CREATE TABLE IF NOT EXISTS product_features (
+            id INTEGER PRIMARY KEY,
+            product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+            feature_key TEXT NOT NULL,
+            feature_value TEXT DEFAULT '',
+            UNIQUE(product_id, feature_key)
+        );
+        CREATE TABLE IF NOT EXISTS product_extra_categories (
+            product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+            category_id INTEGER NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+            PRIMARY KEY(product_id, category_id)
+        );
+        CREATE TABLE IF NOT EXISTS media_items (
+            id INTEGER PRIMARY KEY,
+            filename TEXT NOT NULL,
+            url TEXT NOT NULL,
+            mime_type TEXT DEFAULT 'image/jpeg',
+            width INTEGER DEFAULT 0,
+            height INTEGER DEFAULT 0,
+            size_bytes INTEGER DEFAULT 0,
+            source_note TEXT DEFAULT '',
+            usage_ok INTEGER DEFAULT 1,
+            demo_only INTEGER DEFAULT 0,
+            created REAL DEFAULT (unixepoch())
+        );
+        CREATE TABLE IF NOT EXISTS bot_screens (
+            id INTEGER PRIMARY KEY,
+            screen_key TEXT UNIQUE NOT NULL,
+            name TEXT NOT NULL,
+            draft_data TEXT DEFAULT '{}',
+            published_data TEXT DEFAULT '{}',
+            published_at REAL,
+            sort_order INTEGER DEFAULT 0,
+            created REAL DEFAULT (unixepoch()),
+            updated REAL DEFAULT (unixepoch())
+        );
+        CREATE TABLE IF NOT EXISTS bot_screen_versions (
+            id INTEGER PRIMARY KEY,
+            screen_id INTEGER NOT NULL REFERENCES bot_screens(id) ON DELETE CASCADE,
+            data TEXT NOT NULL,
+            actor TEXT DEFAULT 'admin',
+            created REAL DEFAULT (unixepoch())
+        );
         ''')
 
         # Product columns (non-destructive migration)
@@ -96,6 +177,30 @@ def init():
         _add_column(c, 'orders', 'provider', "TEXT DEFAULT 'jaha'")
         # NULL = use the global markup_percent setting
         _add_column(c, 'categories', 'markup_percent', 'REAL')
+
+        # services
+        _add_column(c, 'products', 'service_id', 'INTEGER REFERENCES services(id)')
+        _add_column(c, 'products', 'conditions', 'TEXT DEFAULT ""')
+        _add_column(c, 'products', 'warranty', 'TEXT DEFAULT ""')
+        _add_column(c, 'products', 'instructions', 'TEXT DEFAULT ""')
+        _add_column(c, 'products', 'promo_field_label', 'TEXT DEFAULT ""')
+
+        # variants and display
+        _add_column(c, 'products', 'region', 'TEXT DEFAULT ""')
+        _add_column(c, 'products', 'duration_days', 'INTEGER DEFAULT 0')
+        _add_column(c, 'products', 'access_type', 'TEXT DEFAULT "personal"')
+        _add_column(c, 'products', 'activation_method', 'TEXT DEFAULT ""')
+        _add_column(c, 'products', 'delivery_note', 'TEXT DEFAULT ""')
+        _add_column(c, 'products', 'guarantee_days', 'INTEGER DEFAULT 0')
+        _add_column(c, 'products', 'guarantee_note', 'TEXT DEFAULT ""')
+        _add_column(c, 'products', 'sort_order', 'INTEGER DEFAULT 0')
+        _add_column(c, 'products', 'media_id', 'INTEGER REFERENCES media_items(id)')
+
+        # categories display
+        _add_column(c, 'categories', 'image', 'TEXT DEFAULT ""')
+        _add_column(c, 'categories', 'emoji', 'TEXT DEFAULT ""')
+        _add_column(c, 'categories', 'description', 'TEXT DEFAULT ""')
+        _add_column(c, 'categories', 'visible', 'INTEGER DEFAULT 1')
 
         # Default category
         if not db_one(c, 'SELECT id FROM categories WHERE slug=?', ('general',)):
@@ -116,6 +221,26 @@ def init():
         for k, v in DEFAULT_SETTINGS.items():
             if not db_one(c, 'SELECT value FROM settings WHERE key=?', (k,)):
                 c.execute('INSERT INTO settings VALUES(?,?)', (k, v))
+
+        BOT_SCREENS_DEFAULT = [
+            ('welcome',      'Приветствие',            0),
+            ('main_menu',    'Главное меню',            1),
+            ('catalog',      'Каталог (категории)',     2),
+            ('product_list', 'Список товаров',          3),
+            ('product_card', 'Карточка товара',         4),
+            ('promo_input',  'Ввод промокода',          5),
+            ('checkout',     'Подтверждение заказа',    6),
+            ('waiting',      'Ожидание выдачи',         7),
+            ('delivery',     'Выдача товара',           8),
+            ('orders',       'История заказов',         9),
+            ('guarantee',    'Гарантия',               10),
+            ('support',      'Помощь',                 11),
+            ('docs',         'Документы',              12),
+        ]
+        for key, name, order in BOT_SCREENS_DEFAULT:
+            if not db_one(c, 'SELECT id FROM bot_screens WHERE screen_key=?', (key,)):
+                c.execute('INSERT INTO bot_screens(screen_key,name,sort_order) VALUES(?,?,?)',
+                          (key, name, order))
 
 def db_one(c, sql, args=()):
     r = c.execute(sql, args).fetchone()
